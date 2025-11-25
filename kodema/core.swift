@@ -54,6 +54,153 @@ let localColor = "\u{001B}[32m"
 let cloudColor = "\u{001B}[33;1m"
 let errorColor = "\u{001B}[31;1m"
 let resetColor = "\u{001B}[0m"
+let boldColor = "\u{001B}[1m"
+let dimColor = "\u{001B}[2m"
+
+// MARK: - Progress Tracker
+
+actor ProgressTracker {
+    private(set) var totalFiles: Int = 0
+    private(set) var completedFiles: Int = 0
+    private(set) var failedFiles: Int = 0
+    private(set) var totalBytes: Int64 = 0
+    private(set) var uploadedBytes: Int64 = 0
+    private var currentFileName: String = ""
+    private let startTime: Date = Date()
+    private var cursorHidden: Bool = false
+    
+    func initialize(totalFiles: Int, totalBytes: Int64) {
+        self.totalFiles = totalFiles
+        self.totalBytes = totalBytes
+        // Hide cursor at start
+        print("\u{001B}[?25l", terminator: "")
+        fflush(stdout)
+        cursorHidden = true
+    }
+    
+    func startFile(name: String) {
+        currentFileName = name
+    }
+    
+    func fileCompleted(bytes: Int64) {
+        completedFiles += 1
+        uploadedBytes += bytes
+        currentFileName = ""
+    }
+    
+    func fileFailed() {
+        failedFiles += 1
+        currentFileName = ""
+    }
+    
+    func currentProgress() -> (completed: Int, failed: Int, total: Int, uploadedBytes: Int64, totalBytes: Int64, currentFile: String, elapsed: TimeInterval) {
+        return (completedFiles, failedFiles, totalFiles, uploadedBytes, totalBytes, currentFileName, Date().timeIntervalSince(startTime))
+    }
+    
+    func printProgress() {
+        let (completed, failed, total, uploaded, totalSize, currentFile, elapsed) = currentProgress()
+        let remaining = total - completed - failed
+        let percentage = totalSize > 0 ? Double(uploaded) / Double(totalSize) * 100 : 0
+        
+        // Progress bar
+        let barWidth = 30
+        let filledWidth = Int(Double(barWidth) * percentage / 100.0)
+        let bar = String(repeating: "█", count: filledWidth) + String(repeating: "░", count: barWidth - filledWidth)
+        
+        // Format bytes
+        let uploadedStr = formatBytes(uploaded)
+        let totalStr = formatBytes(totalSize)
+        
+        // Calculate speed
+        let speed = elapsed > 0 ? Double(uploaded) / elapsed : 0
+        let speedStr = formatBytes(Int64(speed)) + "/s"
+        
+        // ETA
+        let remainingBytes = totalSize - uploaded
+        let eta = speed > 0 ? Double(remainingBytes) / speed : 0
+        let etaStr = formatDuration(eta)
+        
+        // Clear line and print progress bar
+        print("\r\u{001B}[K", terminator: "")
+        print("\(boldColor)[\(bar)] \(String(format: "%.1f", percentage))%\(resetColor) | " +
+              "\(localColor)\(completed) ✅\(resetColor) " +
+              "\(errorColor)\(failed) ❌\(resetColor) " +
+              "\(dimColor)\(remaining) ⏳\(resetColor) | " +
+              "\(uploadedStr)/\(totalStr) | " +
+              "\(speedStr) | " +
+              "ETA: \(etaStr)", terminator: "")
+        
+        // Show current file on next line if exists
+        if !currentFile.isEmpty {
+            print("\n\u{001B}[K\(dimColor)⬆️  \(currentFile)\(resetColor)", terminator: "")
+            print("\u{001B}[1A", terminator: "") // Move cursor back up to progress bar line
+        } else {
+            // Clear the line below if no current file
+            print("\n\u{001B}[K", terminator: "")
+            print("\u{001B}[1A", terminator: "")
+        }
+        
+        fflush(stdout)
+    }
+    
+    func printFinal() {
+        let (completed, failed, total, uploaded, totalSize, _, elapsed) = currentProgress()
+        
+        // Show cursor again
+        if cursorHidden {
+            print("\n\n\u{001B}[?25h", terminator: "")
+            fflush(stdout)
+        }
+        
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("\(boldColor)Upload Complete!\(resetColor)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("  \(localColor)✅ Успішно:\(resetColor) \(completed) файлів")
+        print("  \(errorColor)❌ Помилок:\(resetColor) \(failed) файлів")
+        print("  📦 Завантажено: \(formatBytes(uploaded)) з \(formatBytes(totalSize))")
+        print("  ⏱️  Час: \(formatDuration(elapsed))")
+        if elapsed > 0 {
+            let avgSpeed = Double(uploaded) / elapsed
+            print("  🚀 Середня швидкість: \(formatBytes(Int64(avgSpeed)))/s")
+        }
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+    }
+}
+
+func formatBytes(_ bytes: Int64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"]
+    var value = Double(bytes)
+    var unitIndex = 0
+    
+    while value >= 1024 && unitIndex < units.count - 1 {
+        value /= 1024
+        unitIndex += 1
+    }
+    
+    if unitIndex == 0 {
+        return "\(Int(value)) \(units[unitIndex])"
+    } else {
+        return String(format: "%.2f %@", value, units[unitIndex])
+    }
+}
+
+func formatDuration(_ seconds: TimeInterval) -> String {
+    if seconds.isInfinite || seconds.isNaN {
+        return "∞"
+    }
+    let total = Int(seconds)
+    let hours = total / 3600
+    let minutes = (total % 3600) / 60
+    let secs = total % 60
+    
+    if hours > 0 {
+        return String(format: "%dг %dхв %dс", hours, minutes, secs)
+    } else if minutes > 0 {
+        return String(format: "%dхв %dс", minutes, secs)
+    } else {
+        return String(format: "%dс", secs)
+    }
+}
 
 // MARK: - Helpers
 
@@ -749,11 +896,32 @@ func guessContentType(for url: URL) -> String? {
     return nil // use b2/x-auto
 }
 
+// MARK: - Signal handling
+
+func setupSignalHandlers() {
+    // Handle SIGINT (Control+C)
+    signal(SIGINT) { _ in
+        print("\u{001B}[?25h") // Show cursor
+        fflush(stdout)
+        exit(130)
+    }
+    
+    // Handle SIGTERM
+    signal(SIGTERM) { _ in
+        print("\u{001B}[?25h") // Show cursor
+        fflush(stdout)
+        exit(143)
+    }
+}
+
 // MARK: - Main flow (async)
 
 @main
 struct Runner {
     static func main() async {
+        setupSignalHandlers()
+        let progress = ProgressTracker()
+        
         do {
             // Load config
             let configURL = readConfigURL(from: CommandLine.arguments)
@@ -790,24 +958,38 @@ struct Runner {
             let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
             let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
 
+            // Initialize progress tracker
+            let totalBytes = sortedFiles.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+            await progress.initialize(totalFiles: sortedFiles.count, totalBytes: totalBytes)
+            
+            print("\n\(boldColor)Початок завантаження\(resetColor)")
+            print("  📂 Файлів: \(sortedFiles.count)")
+            print("  📦 Загальний розмір: \(formatBytes(totalBytes))")
+            print("")
+
             // Upload loop
             for file in sortedFiles {
+                // Show initial progress before starting
+                await progress.printProgress()
+                
                 do {
                     let url = file.url
                     let status = file.status
 
                     if status == "Cloud" {
-                        print("\(cloudColor)Downloading from iCloud:\(resetColor) \(url.path)")
+                        await progress.startFile(name: "☁️  \(url.lastPathComponent)")
+                        await progress.printProgress()
+                        
                         startDownloadIfNeeded(url: url)
                         let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
                             await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
                         }
                         if !ok {
-                            print("\(errorColor)Timeout downloading iCloud file:\(resetColor) \(url.path)")
+                            await progress.fileFailed()
                             continue
                         }
                     } else if status == "Error" {
-                        print("\(errorColor)Skipping due to error status:\(resetColor) \(url.path)")
+                        await progress.fileFailed()
                         continue
                     }
 
@@ -817,9 +999,9 @@ struct Runner {
                     let size = file.size ?? (fileSize(url: url) ?? 0)
                     let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
 
-                    print("⬆️  Uploading to B2: \(remoteName) (\(size) bytes)")
+                    await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
+                    await progress.printProgress()
 
-                    let start = Date()
                     if size <= smallFileThreshold {
                         let sha1 = try sha1HexStream(fileURL: url)
                         try await withTimeoutVoid(overallUploadTimeout) {
@@ -830,25 +1012,25 @@ struct Runner {
                             try await client.uploadLargeFile(fileURL: url, fileName: remoteName, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
                         }
                     }
-                    let elapsed = Date().timeIntervalSince(start)
-                    if elapsed > overallUploadTimeout {
-                        print("\(errorColor)Warning: upload exceeded overall timeout threshold\(resetColor)")
-                    } else {
-                        print("\(localColor)✅ Uploaded:\(resetColor) \(remoteName)")
-                    }
+                    
+                    await progress.fileCompleted(bytes: size)
 
                     if status == "Cloud" {
-                        print("🧹 Evicting local copy for iCloud file: \(url.lastPathComponent)")
                         evictIfUbiquitous(url: url)
                     }
                 } catch TimeoutError.timedOut {
-                    print("\(errorColor)Timed out:\(resetColor) \(file.url.path)")
+                    await progress.fileFailed()
                 } catch {
-                    print("\(errorColor)Upload failed:\(resetColor) \(file.url.path) — \(error)")
+                    await progress.fileFailed()
                 }
             }
+            
+            await progress.printFinal()
         } catch {
-            print("\(errorColor)Fatal error:\(resetColor) \(error)")
+            // Show cursor on error
+            print("\u{001B}[?25h", terminator: "")
+            fflush(stdout)
+            print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
             exit(1)
         }
     }
