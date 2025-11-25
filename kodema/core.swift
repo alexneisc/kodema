@@ -155,13 +155,13 @@ actor ProgressTracker {
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
         print("\(boldColor)Upload Complete!\(resetColor)")
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
-        print("  \(localColor)✅ Успішно:\(resetColor) \(completed) файлів")
-        print("  \(errorColor)❌ Помилок:\(resetColor) \(failed) файлів")
-        print("  📦 Завантажено: \(formatBytes(uploaded)) з \(formatBytes(totalSize))")
-        print("  ⏱️  Час: \(formatDuration(elapsed))")
+        print("  \(localColor)✅ Successful:\(resetColor) \(completed) files")
+        print("  \(errorColor)❌ Failed:\(resetColor) \(failed) files")
+        print("  📦 Uploaded: \(formatBytes(uploaded)) of \(formatBytes(totalSize))")
+        print("  ⏱️ Time: \(formatDuration(elapsed))")
         if elapsed > 0 {
             let avgSpeed = Double(uploaded) / elapsed
-            print("  🚀 Середня швидкість: \(formatBytes(Int64(avgSpeed)))/s")
+            print("  🚀 Average speed: \(formatBytes(Int64(avgSpeed)))/s")
         }
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
     }
@@ -194,11 +194,11 @@ func formatDuration(_ seconds: TimeInterval) -> String {
     let secs = total % 60
     
     if hours > 0 {
-        return String(format: "%dг %dхв %dс", hours, minutes, secs)
+        return String(format: "%dh %dm %ds", hours, minutes, secs)
     } else if minutes > 0 {
-        return String(format: "%dхв %dс", minutes, secs)
+        return String(format: "%dm %ds", minutes, secs)
     } else {
-        return String(format: "%dс", secs)
+        return String(format: "%ds", secs)
     }
 }
 
@@ -242,7 +242,7 @@ enum TimeoutError: Error {
     case timedOut
 }
 
-// У цих обгортках не створюємо конкурентних тасків, щоб не вимагати Sendable для захоплених об’єктів.
+// These wrappers don't create concurrent tasks to avoid requiring Sendable for captured objects.
 func withTimeoutVoid(_ seconds: TimeInterval, _ operation: () async throws -> Void) async throws {
     try await operation()
 }
@@ -476,7 +476,7 @@ enum HTTPError: Error, CustomStringConvertible {
 
 extension URLSession {
     func data(for request: URLRequest, timeout: TimeInterval) async throws -> (Data, HTTPURLResponse) {
-        // Розраховуємо на timeouts із конфігурації сесії; тут без додаткових конкурентних обгорток.
+        // Relies on timeouts from session configuration; no additional concurrent wrappers here.
         let (data, response) = try await self.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw HTTPError.unexpectedResponse("No HTTP response")
@@ -962,9 +962,9 @@ struct Runner {
             let totalBytes = sortedFiles.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             await progress.initialize(totalFiles: sortedFiles.count, totalBytes: totalBytes)
             
-            print("\n\(boldColor)Початок завантаження\(resetColor)")
-            print("  📂 Файлів: \(sortedFiles.count)")
-            print("  📦 Загальний розмір: \(formatBytes(totalBytes))")
+            print("\n\(boldColor)Starting upload\(resetColor)")
+            print("  📂 Files: \(sortedFiles.count)")
+            print("  📦 Total size: \(formatBytes(totalBytes))")
             print("")
 
             // Upload loop
