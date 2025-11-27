@@ -1194,8 +1194,12 @@ func setupSignalHandlers() {
 
 // MARK: - Help message
 
+func printVersion() {
+    print("Kodema v\(KODEMA_VERSION)")
+}
+
 func printHelp() {
-    print("\n\(boldColor)Kodema - iCloud to Backblaze B2 Backup Tool\(resetColor)")
+    print("\n\(boldColor)Kodema v\(KODEMA_VERSION) - iCloud to Backblaze B2 Backup Tool\(resetColor)")
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
     print("\nUsage:")
     print("  kodema <command> [options]")
@@ -1204,6 +1208,7 @@ func printHelp() {
     print("  \(boldColor)mirror\(resetColor) [config_path]    Simple mirroring (uploads all files)")
     print("  \(boldColor)cleanup\(resetColor) [config_path]   Clean up old backup versions per retention policy")
     print("  \(boldColor)list\(resetColor)                   List all folders in iCloud Drive")
+    print("  \(boldColor)version\(resetColor)                Show version information")
     print("  \(boldColor)help\(resetColor)                   Show this help message")
     print("\nExamples:")
     print("  kodema backup                 Incremental backup with default config")
@@ -1944,8 +1949,12 @@ struct Runner {
         let command = args.count > 1 ? args[1] : "help"
 
         switch command {
-        case "help":
+        case "help", "-h", "--help":
             printHelp()
+            return
+
+        case "version", "-v", "--version":
+            printVersion()
             return
 
         case "list":
