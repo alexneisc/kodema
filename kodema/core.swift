@@ -104,7 +104,7 @@ actor ProgressTracker {
     private var currentFileName: String = ""
     private let startTime: Date = Date()
     private var cursorHidden: Bool = false
-    
+
     func initialize(totalFiles: Int, totalBytes: Int64) {
         self.totalFiles = totalFiles
         self.totalBytes = totalBytes
@@ -113,49 +113,49 @@ actor ProgressTracker {
         fflush(stdout)
         cursorHidden = true
     }
-    
+
     func startFile(name: String) {
         currentFileName = name
     }
-    
+
     func fileCompleted(bytes: Int64) {
         completedFiles += 1
         uploadedBytes += bytes
         currentFileName = ""
     }
-    
+
     func fileFailed() {
         failedFiles += 1
         currentFileName = ""
     }
-    
+
     func currentProgress() -> (completed: Int, failed: Int, total: Int, uploadedBytes: Int64, totalBytes: Int64, currentFile: String, elapsed: TimeInterval) {
         return (completedFiles, failedFiles, totalFiles, uploadedBytes, totalBytes, currentFileName, Date().timeIntervalSince(startTime))
     }
-    
+
     func printProgress() {
         let (completed, failed, total, uploaded, totalSize, currentFile, elapsed) = currentProgress()
         let remaining = total - completed - failed
         let percentage = totalSize > 0 ? Double(uploaded) / Double(totalSize) * 100 : 0
-        
+
         // Progress bar
         let barWidth = 30
         let filledWidth = Int(Double(barWidth) * percentage / 100.0)
         let bar = String(repeating: "█", count: filledWidth) + String(repeating: "░", count: barWidth - filledWidth)
-        
+
         // Format bytes
         let uploadedStr = formatBytes(uploaded)
         let totalStr = formatBytes(totalSize)
-        
+
         // Calculate speed
         let speed = elapsed > 0 ? Double(uploaded) / elapsed : 0
         let speedStr = formatBytes(Int64(speed)) + "/s"
-        
+
         // ETA
         let remainingBytes = totalSize - uploaded
         let eta = speed > 0 ? Double(remainingBytes) / speed : 0
         let etaStr = formatDuration(eta)
-        
+
         // Clear line and print progress bar
         print("\r\u{001B}[K", terminator: "")
         print("\(boldColor)[\(bar)] \(String(format: "%.1f", percentage))%\(resetColor) | " +
@@ -165,7 +165,7 @@ actor ProgressTracker {
               "\(uploadedStr)/\(totalStr) | " +
               "\(speedStr) | " +
               "ETA: \(etaStr)", terminator: "")
-        
+
         // Show current file on next line if exists
         if !currentFile.isEmpty {
             print("\n\u{001B}[K\(dimColor)⬆️  \(currentFile)\(resetColor)", terminator: "")
@@ -175,19 +175,19 @@ actor ProgressTracker {
             print("\n\u{001B}[K", terminator: "")
             print("\u{001B}[1A", terminator: "")
         }
-        
+
         fflush(stdout)
     }
-    
+
     func printFinal() {
         let (completed, failed, total, uploaded, totalSize, _, elapsed) = currentProgress()
-        
+
         // Show cursor again
         if cursorHidden {
             print("\n\n\u{001B}[?25h", terminator: "")
             fflush(stdout)
         }
-        
+
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
         print("\(boldColor)Upload Complete!\(resetColor)")
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
@@ -207,12 +207,12 @@ func formatBytes(_ bytes: Int64) -> String {
     let units = ["B", "KB", "MB", "GB", "TB"]
     var value = Double(bytes)
     var unitIndex = 0
-    
+
     while value >= 1024 && unitIndex < units.count - 1 {
         value /= 1024
         unitIndex += 1
     }
-    
+
     if unitIndex == 0 {
         return "\(Int(value)) \(units[unitIndex])"
     } else {
@@ -228,7 +228,7 @@ func formatDuration(_ seconds: TimeInterval) -> String {
     let hours = total / 3600
     let minutes = (total % 3600) / 60
     let secs = total % 60
-    
+
     if hours > 0 {
         return String(format: "%dh %dm %ds", hours, minutes, secs)
     } else if minutes > 0 {
@@ -408,7 +408,7 @@ func buildFoldersToScan(from config: AppConfig) -> [URL] {
                 // Fall through to default folders
             }
         }
-        
+
         // Fallback if iCloud not available: ~/Documents and ~/Desktop
         return [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents"),
@@ -667,7 +667,7 @@ struct B2FileInfo: Decodable {
     let fileName: String
     let contentLength: Int64
     let uploadTimestamp: Int64?
-    
+
     enum CodingKeys: String, CodingKey {
         case fileId
         case fileName
@@ -957,26 +957,26 @@ final class B2Client {
         guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
         return auth.absoluteMinimumPartSize
     }
-    
+
     // List files with prefix
     func listFiles(prefix: String, maxFileCount: Int = 10000) async throws -> [B2FileInfo] {
         try await ensureAuthorized()
         let bid = try await ensureBucketId()
         guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
-        
+
         var allFiles: [B2FileInfo] = []
         var startFileName: String? = nil
-        
+
         repeat {
             guard let url = URL(string: "\(auth.apiUrl)/b2api/v2/b2_list_file_names") else {
                 throw HTTPError.invalidURL
             }
-            
+
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
             req.addValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-            
+
             var body: [String: Any] = [
                 "bucketId": bid,
                 "maxFileCount": maxFileCount,
@@ -986,7 +986,7 @@ final class B2Client {
                 body["startFileName"] = start
             }
             req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-            
+
             do {
                 let (data, _) = try await session.data(for: req, timeout: networkTimeout)
                 let response = try JSONDecoder().decode(B2ListFileNamesResponse.self, from: data)
@@ -996,10 +996,10 @@ final class B2Client {
                 throw mapHTTPErrorToB2(error)
             }
         } while startFileName != nil
-        
+
         return allFiles
     }
-    
+
     // Delete file version
     func deleteFileVersion(fileName: String, fileId: String) async throws {
         try await ensureAuthorized()
@@ -1007,16 +1007,39 @@ final class B2Client {
         guard let url = URL(string: "\(auth.apiUrl)/b2api/v2/b2_delete_file_version") else {
             throw HTTPError.invalidURL
         }
-        
+
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
         req.addValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = ["fileName": fileName, "fileId": fileId]
         req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-        
+
         do {
             _ = try await session.data(for: req, timeout: networkTimeout)
+        } catch {
+            throw mapHTTPErrorToB2(error)
+        }
+    }
+
+    // Download file by name
+    func downloadFile(fileName: String) async throws -> Data {
+        try await ensureAuthorized()
+        guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
+
+        // B2 download URL format: {downloadUrl}/file/{bucketName}/{fileName}
+        let encodedFileName = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName
+        guard let url = URL(string: "\(auth.downloadUrl)/file/\(cfg.bucketName)/\(encodedFileName)") else {
+            throw HTTPError.invalidURL
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
+
+        do {
+            let (data, _) = try await session.data(for: req, timeout: networkTimeout)
+            return data
         } catch {
             throw mapHTTPErrorToB2(error)
         }
@@ -1039,10 +1062,49 @@ func parseTimestamp(_ timestamp: String) -> Date? {
     return formatter.date(from: timestamp)
 }
 
+// Fetch latest snapshot manifest from B2
+func fetchLatestManifest(client: B2Client, remotePrefix: String) async throws -> SnapshotManifest? {
+    // List all snapshot manifests
+    let manifestFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
+
+    // Filter to only manifest.json files
+    let manifests = manifestFiles.filter { $0.fileName.hasSuffix("/manifest.json") }
+
+    if manifests.isEmpty {
+        return nil
+    }
+
+    // Sort by timestamp (latest first)
+    let sorted = manifests.sorted { file1, file2 in
+        // Extract timestamp from path: backup/snapshots/{timestamp}/manifest.json
+        let components1 = file1.fileName.split(separator: "/")
+        let components2 = file2.fileName.split(separator: "/")
+
+        guard components1.count >= 3, components2.count >= 3 else {
+            return false
+        }
+
+        let timestamp1 = String(components1[components1.count - 2])
+        let timestamp2 = String(components2[components2.count - 2])
+
+        return timestamp1 > timestamp2
+    }
+
+    // Download and parse the latest manifest
+    guard let latest = sorted.first else {
+        return nil
+    }
+
+    let data = try await client.downloadFile(fileName: latest.fileName)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(SnapshotManifest.self, from: data)
+}
+
 // Build relative path from home or scan root
 func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
     let localPath = localURL.path
-    
+
     // Try to find matching scan root
     for root in scanRoots {
         if localPath.hasPrefix(root.path) {
@@ -1051,56 +1113,39 @@ func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
             return relative
         }
     }
-    
+
     // Fallback to home-relative
     let home = FileManager.default.homeDirectoryForCurrentUser
     if localPath.hasPrefix(home.path) {
         return String(localPath.dropFirst(home.path.count))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
-    
+
     return localURL.lastPathComponent
 }
 
-// Check if file needs backup based on size + mtime
-func fileNeedsBackup(file: FileItem, existingVersions: [B2FileInfo], relativePath: String, timestamp: String, remotePrefix: String) -> Bool {
+// Check if file needs backup based on size + mtime comparison with latest snapshot
+func fileNeedsBackup(file: FileItem, latestManifest: SnapshotManifest?, relativePath: String) -> Bool {
     guard let localSize = file.size, let localMtime = file.modificationDate else {
         return true // If we can't get info, assume it needs backup
     }
-    
-    // Build the expected remote path for this version
-    let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
-    
-    // Check if this exact version already exists
-    let existsWithSameVersion = existingVersions.contains { b2File in
-        b2File.fileName == versionPath && b2File.contentLength == localSize
+
+    // If no previous manifest exists, this is the first backup
+    guard let manifest = latestManifest else {
+        return true
     }
-    
-    if existsWithSameVersion {
-        return false // Already uploaded this version
+
+    // Find the file in the previous manifest
+    guard let previousVersion = manifest.files.first(where: { $0.path == relativePath }) else {
+        return true // File didn't exist in previous backup
     }
-    
-    // Check if ANY version exists with same size and similar mtime (within 1 second tolerance)
-    let existsWithSameMtime = existingVersions.contains { b2File in
-        guard b2File.fileName.hasPrefix("\(remotePrefix)/files/\(relativePath)/") else {
-            return false
-        }
-        
-        // Extract timestamp from path
-        let components = b2File.fileName.split(separator: "/")
-        guard let versionTimestamp = components.last.map(String.init),
-              let versionDate = parseTimestamp(versionTimestamp) else {
-            return false
-        }
-        
-        // Compare size and mtime (with 1 second tolerance)
-        let mtimeMatch = abs(versionDate.timeIntervalSince(localMtime)) < 1.0
-        let sizeMatch = b2File.contentLength == localSize
-        
-        return mtimeMatch && sizeMatch
-    }
-    
-    return !existsWithSameMtime
+
+    // Compare size and modification time (with 1 second tolerance for filesystem precision)
+    let sizeMatch = previousVersion.size == localSize
+    let mtimeMatch = abs(previousVersion.modificationDate.timeIntervalSince(localMtime)) < 1.0
+
+    // File needs backup only if it has changed
+    return !(sizeMatch && mtimeMatch)
 }
 
 // MARK: - Remote path building
@@ -1136,7 +1181,7 @@ func setupSignalHandlers() {
         fflush(stdout)
         exit(130)
     }
-    
+
     // Handle SIGTERM
     signal(SIGTERM) { _ in
         print("\u{001B}[?25h") // Show cursor
@@ -1180,7 +1225,7 @@ func findICloudDrive() -> URL? {
         .appendingPathComponent("Library")
         .appendingPathComponent("Mobile Documents")
         .appendingPathComponent("com~apple~CloudDocs")
-    
+
     if FileManager.default.fileExists(atPath: icloudDrive.path) {
         return icloudDrive
     }
@@ -1192,19 +1237,19 @@ func listICloudFolders() {
     let mobileDocsRoot = home
         .appendingPathComponent("Library")
         .appendingPathComponent("Mobile Documents")
-    
+
     guard FileManager.default.fileExists(atPath: mobileDocsRoot.path) else {
         print("\(errorColor)❌ iCloud not found\(resetColor)")
         print("Make sure iCloud Drive is enabled in System Settings.")
         return
     }
-    
+
     print("\n\(boldColor)☁️  iCloud Folders with Files:\(resetColor)")
     print("   \(dimColor)\(mobileDocsRoot.path)\(resetColor)")
     print("")
-    
+
     let fileManager = FileManager.default
-    
+
     // Apple system containers to skip
     let appleContainers = Set([
         "com~apple~CloudDocs",
@@ -1221,7 +1266,7 @@ func listICloudFolders() {
         "com~apple~shoebox",
         "com~apple~shortcuts"
     ])
-    
+
     do {
         // Get all container directories
         let containers = try fileManager.contentsOfDirectory(
@@ -1234,21 +1279,21 @@ func listICloudFolders() {
             // Skip Apple containers
             return isDir && !appleContainers.contains(name)
         }.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() }
-        
+
         if containers.isEmpty {
             print("\(dimColor)No third-party iCloud containers found\(resetColor)")
             print("\(dimColor)(Apple system folders are hidden)\(resetColor)")
             return
         }
-        
+
         print("\(boldColor)📦 Your Apps:\(resetColor)")
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
-        
+
         var totalContainersShown = 0
-        
+
         for container in containers {
             let containerName = container.lastPathComponent
-            
+
             // List folders in this container
             do {
                 let folders = try fileManager.contentsOfDirectory(
@@ -1258,14 +1303,14 @@ func listICloudFolders() {
                 ).filter { url in
                     (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
                 }.sorted { $0.lastPathComponent.lowercased() < $1.lastPathComponent.lowercased() }
-                
+
                 // Count files in each folder to filter empty ones
                 var foldersWithFiles: [(url: URL, fileCount: Int, totalSize: Int64)] = []
-                
+
                 for folder in folders {
                     var fileCount = 0
                     var totalSize: Int64 = 0
-                    
+
                     if let enumerator = fileManager.enumerator(
                         at: folder,
                         includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
@@ -1283,20 +1328,20 @@ func listICloudFolders() {
                             }
                         }
                     }
-                    
+
                     // Only include folders with files
                     if fileCount > 0 {
                         foldersWithFiles.append((url: folder, fileCount: fileCount, totalSize: totalSize))
                     }
                 }
-                
+
                 // Skip this container if no folders with files
                 if foldersWithFiles.isEmpty {
                     continue
                 }
-                
+
                 totalContainersShown += 1
-                
+
                 // Decode app name from container ID (e.g., "iCloud~md~obsidian" -> "Obsidian")
                 let displayName: String
                 if containerName.hasPrefix("iCloud~") {
@@ -1306,34 +1351,34 @@ func listICloudFolders() {
                 } else {
                     displayName = containerName
                 }
-                
+
                 print("  \(cloudColor)▶\(resetColor) \(boldColor)\(displayName)\(resetColor)")
                 print("    \(dimColor)\(container.path)\(resetColor)")
-                
+
                 for (folder, fileCount, totalSize) in foldersWithFiles.prefix(10) {
                     let name = folder.lastPathComponent
                     print("    \(localColor)  •\(resetColor) \(name)")
                     print("      \(dimColor)Files: \(fileCount)\(fileCount >= 1000 ? "+" : "") | Size: \(formatBytes(totalSize))\(resetColor)")
                 }
-                
+
                 if foldersWithFiles.count > 10 {
                     print("    \(dimColor)  ... and \(foldersWithFiles.count - 10) more folders\(resetColor)")
                 }
-                
+
                 print("")
-                
+
             } catch {
                 // Skip containers we can't read
                 continue
             }
         }
-        
+
         if totalContainersShown == 0 {
             print("\(dimColor)No folders with files found\(resetColor)")
             print("\(dimColor)(Empty folders and Apple system apps are hidden)\(resetColor)\n")
             return
         }
-        
+
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
         print("\n\(boldColor)💡 Tip:\(resetColor) Add folders to your config.yml:")
         print("\(dimColor)include:")
@@ -1345,7 +1390,7 @@ func listICloudFolders() {
         print("\n    # You can also add local folders:")
         print("    - ~/Documents")
         print("    - ~/Desktop\(resetColor)\n")
-        
+
     } catch {
         print("\(errorColor)❌ Error reading iCloud:\(resetColor) \(error)")
     }
@@ -1373,7 +1418,7 @@ func classifySnapshot(date: Date, now: Date, retention: RetentionConfig) -> Rete
     let days = interval / 86400
     let weeks = interval / (86400 * 7)
     let months = interval / (86400 * 30.44) // Average month length
-    
+
     if let hourlyLimit = retention.hourly, hours < Double(hourlyLimit) {
         return .hourly
     }
@@ -1386,20 +1431,20 @@ func classifySnapshot(date: Date, now: Date, retention: RetentionConfig) -> Rete
     if let monthlyLimit = retention.monthly, months < Double(monthlyLimit) {
         return .monthly
     }
-    
+
     return .tooOld
 }
 
 func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig) -> Set<String> {
     var toKeep = Set<String>()
     let now = Date()
-    
+
     // Group snapshots by bucket
     var hourlySnapshots: [SnapshotInfo] = []
     var dailySnapshots: [SnapshotInfo] = []
     var weeklySnapshots: [SnapshotInfo] = []
     var monthlySnapshots: [SnapshotInfo] = []
-    
+
     for snapshot in snapshots {
         let bucket = classifySnapshot(date: snapshot.date, now: now, retention: retention)
         switch bucket {
@@ -1415,12 +1460,12 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
             break // Will be deleted
         }
     }
-    
+
     // Hourly: keep all
     for snapshot in hourlySnapshots {
         toKeep.insert(snapshot.timestamp)
     }
-    
+
     // Daily: keep one per day (the latest one each day)
     let dailyGroups = Dictionary(grouping: dailySnapshots) { snapshot -> String in
         let formatter = DateFormatter()
@@ -1432,7 +1477,7 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
             toKeep.insert(latest.timestamp)
         }
     }
-    
+
     // Weekly: keep one per week (the latest one each week)
     let calendar = Calendar.current
     let weeklyGroups = Dictionary(grouping: weeklySnapshots) { snapshot -> String in
@@ -1444,7 +1489,7 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
             toKeep.insert(latest.timestamp)
         }
     }
-    
+
     // Monthly: keep one per month (the latest one each month)
     let monthlyGroups = Dictionary(grouping: monthlySnapshots) { snapshot -> String in
         let formatter = DateFormatter()
@@ -1456,7 +1501,7 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
             toKeep.insert(latest.timestamp)
         }
     }
-    
+
     return toKeep
 }
 
@@ -1468,7 +1513,7 @@ func runCleanup(config: AppConfig) async throws {
         print("Add a retention policy to your config.yml under backup.retention")
         return
     }
-    
+
     print("\n\(boldColor)Starting cleanup\(resetColor)")
     print("  🧹 Retention policy:")
     if let h = retention.hourly { print("     Hourly: \(h) hours") }
@@ -1476,18 +1521,18 @@ func runCleanup(config: AppConfig) async throws {
     if let w = retention.weekly { print("     Weekly: \(w) weeks") }
     if let m = retention.monthly { print("     Monthly: \(m) months") }
     print("")
-    
+
     // Prepare B2 client
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
-    
+
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
-    
+
     // Fetch all snapshots
     print("  ☁️  Fetching snapshots from B2...")
     let snapshotFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
-    
+
     // Parse snapshot list
     var snapshots: [SnapshotInfo] = []
     for file in snapshotFiles {
@@ -1504,27 +1549,27 @@ func runCleanup(config: AppConfig) async throws {
             manifestPath: file.fileName
         ))
     }
-    
+
     print("  ✓ Found \(snapshots.count) snapshots")
-    
+
     if snapshots.isEmpty {
         print("  ℹ️  No snapshots to clean up")
         return
     }
-    
+
     // Select snapshots to keep
     let toKeep = selectSnapshotsToKeep(snapshots: snapshots, retention: retention)
     let toDelete = snapshots.filter { !toKeep.contains($0.timestamp) }
-    
+
     print("  📊 Analysis:")
     print("     Keep: \(toKeep.count) snapshots")
     print("     Delete: \(toDelete.count) snapshots")
-    
+
     if toDelete.isEmpty {
         print("  ✅ Nothing to clean up")
         return
     }
-    
+
     print("\n  \(boldColor)Snapshots to delete:\(resetColor)")
     for snapshot in toDelete.prefix(10).sorted(by: { $0.date < $1.date }) {
         print("     \(dimColor)• \(snapshot.timestamp)\(resetColor)")
@@ -1532,19 +1577,19 @@ func runCleanup(config: AppConfig) async throws {
     if toDelete.count > 10 {
         print("     \(dimColor)... and \(toDelete.count - 10) more\(resetColor)")
     }
-    
+
     // Confirm deletion
     print("\n  \(errorColor)⚠️  This will permanently delete \(toDelete.count) snapshots!\(resetColor)")
     print("  Type 'yes' to continue: ", terminator: "")
     fflush(stdout)
-    
+
     guard let response = readLine(), response.lowercased() == "yes" else {
         print("  ℹ️  Cleanup cancelled")
         return
     }
-    
+
     print("\n  🗑️  Deleting snapshots...")
-    
+
     // Delete snapshot manifests
     var deletedSnapshots = 0
     for snapshot in toDelete {
@@ -1560,18 +1605,18 @@ func runCleanup(config: AppConfig) async throws {
             print("     \(errorColor)✗ Failed to delete \(snapshot.timestamp): \(error)\(resetColor)")
         }
     }
-    
+
     print("\n  🧹 Cleaning up orphaned file versions...")
-    
+
     // Fetch all file versions
     let allFileVersions = try await client.listFiles(prefix: "\(remotePrefix)/files/")
-    
+
     // Build set of version timestamps that are still referenced by kept snapshots
     var referencedVersions = Set<String>()
     for snapshot in snapshots where toKeep.contains(snapshot.timestamp) {
         referencedVersions.insert(snapshot.timestamp)
     }
-    
+
     // Find orphaned versions (versions not in any kept snapshot)
     var orphanedVersions: [(file: B2FileInfo, versionTimestamp: String)] = []
     for file in allFileVersions {
@@ -1580,14 +1625,14 @@ func runCleanup(config: AppConfig) async throws {
         guard let versionTimestamp = components.last.map(String.init) else {
             continue
         }
-        
+
         if !referencedVersions.contains(versionTimestamp) {
             orphanedVersions.append((file, versionTimestamp))
         }
     }
-    
+
     print("     Found \(orphanedVersions.count) orphaned file versions")
-    
+
     if orphanedVersions.isEmpty {
         print("     ✓ No orphaned versions to delete")
     } else {
@@ -1605,7 +1650,7 @@ func runCleanup(config: AppConfig) async throws {
         }
         print("     ✓ Deleted \(deletedVersions) orphaned versions")
     }
-    
+
     print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
     print("\(boldColor)Cleanup Complete!\(resetColor)")
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
@@ -1619,48 +1664,52 @@ func runCleanup(config: AppConfig) async throws {
 
 func runIncrementalBackup(config: AppConfig) async throws {
     let progress = ProgressTracker()
-    
+
     let excludeHidden = config.filters?.excludeHidden ?? true
     let folders = buildFoldersToScan(from: config)
-    
+
     // Scan local files
     var allFiles: [FileItem] = []
     for folder in folders {
         allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
     }
     allFiles = applyFilters(allFiles, filters: config.filters)
-    
+
     // Prepare B2 client
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let overallUploadTimeout = TimeInterval(config.timeouts?.overallUploadSeconds ?? 7200)
     let icloudTimeout = config.timeouts?.icloudDownloadSeconds ?? 1800
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
-    
+
     // Generate snapshot timestamp
     let timestamp = generateTimestamp()
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
-    
+
     print("\n\(boldColor)Starting incremental backup\(resetColor)")
     print("  📸 Snapshot: \(timestamp)")
     print("  📂 Scanned files: \(allFiles.count)")
-    
-    // Fetch existing files from B2
-    print("  ☁️  Fetching existing files from B2...")
-    let existingFiles = try await client.listFiles(prefix: "\(remotePrefix)/files/")
-    print("  ✓ Found \(existingFiles.count) existing file versions")
-    
+
+    // Fetch latest snapshot manifest from B2
+    print("  ☁️ Fetching latest snapshot from B2...")
+    let latestManifest = try await fetchLatestManifest(client: client, remotePrefix: remotePrefix)
+    if let manifest = latestManifest {
+        print("  ✓ Found previous snapshot: \(manifest.timestamp) with \(manifest.totalFiles) files")
+    } else {
+        print("  ℹ️ No previous snapshots found - this is the first backup")
+    }
+
     // Determine which files need backup
     var filesToBackup: [(file: FileItem, relativePath: String)] = []
     for file in allFiles {
         let relativePath = buildRelativePath(for: file.url, from: folders)
-        if fileNeedsBackup(file: file, existingVersions: existingFiles, relativePath: relativePath, timestamp: timestamp, remotePrefix: remotePrefix) {
+        if fileNeedsBackup(file: file, latestManifest: latestManifest, relativePath: relativePath) {
             filesToBackup.append((file, relativePath))
         }
     }
-    
+
     print("  📤 Files to upload: \(filesToBackup.count) (skipping \(allFiles.count - filesToBackup.count) unchanged)")
-    
+
     // Sort: Local first
     filesToBackup.sort {
         if $0.file.status == $1.file.status {
@@ -1668,33 +1717,33 @@ func runIncrementalBackup(config: AppConfig) async throws {
         }
         return $0.file.status == "Local"
     }
-    
+
     // Decide part size
     let recommendedPartSize = (try? await client.recommendedPartSizeBytes()) ?? (100 * 1024 * 1024)
     let configuredPartSizeMB = config.b2.partSizeMB
     let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
     let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
-    
+
     // Initialize progress
     let totalBytes = filesToBackup.reduce(Int64(0)) { $0 + ($1.file.size ?? 0) }
     await progress.initialize(totalFiles: filesToBackup.count, totalBytes: totalBytes)
     print("")
-    
+
     // Upload files & build manifest
     var manifestFiles: [FileVersionInfo] = []
-    
+
     for (file, relativePath) in filesToBackup {
         await progress.printProgress()
-        
+
         do {
             let url = file.url
             let status = file.status
-            
+
             // Handle iCloud downloads
             if status == "Cloud" {
                 await progress.startFile(name: "☁️  \(url.lastPathComponent)")
                 await progress.printProgress()
-                
+
                 startDownloadIfNeeded(url: url)
                 let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
                     await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
@@ -1707,18 +1756,18 @@ func runIncrementalBackup(config: AppConfig) async throws {
                 await progress.fileFailed()
                 continue
             }
-            
+
             // Upload to versioned path
             let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
             let contentType = guessContentType(for: url)
             let size = file.size ?? (fileSize(url: url) ?? 0)
             let mtime = file.modificationDate ?? Date()
-            
+
             await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
             await progress.printProgress()
-            
+
             let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
-            
+
             if size <= smallFileThreshold {
                 let sha1 = try sha1HexStream(fileURL: url)
                 try await withTimeoutVoid(overallUploadTimeout) {
@@ -1729,9 +1778,9 @@ func runIncrementalBackup(config: AppConfig) async throws {
                     try await client.uploadLargeFile(fileURL: url, fileName: versionPath, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
                 }
             }
-            
+
             await progress.fileCompleted(bytes: size)
-            
+
             // Add to manifest
             manifestFiles.append(FileVersionInfo(
                 path: relativePath,
@@ -1739,7 +1788,7 @@ func runIncrementalBackup(config: AppConfig) async throws {
                 modificationDate: mtime,
                 versionTimestamp: timestamp
             ))
-            
+
             if status == "Cloud" {
                 evictIfUbiquitous(url: url)
             }
@@ -1749,7 +1798,7 @@ func runIncrementalBackup(config: AppConfig) async throws {
             await progress.fileFailed()
         }
     }
-    
+
     // Create and upload manifest
     let manifest = SnapshotManifest(
         timestamp: timestamp,
@@ -1758,21 +1807,21 @@ func runIncrementalBackup(config: AppConfig) async throws {
         totalFiles: manifestFiles.count,
         totalBytes: manifestFiles.reduce(0) { $0 + $1.size }
     )
-    
+
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let manifestData = try encoder.encode(manifest)
-    
+
     // Upload manifest
     let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
     let manifestTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("manifest_\(timestamp).json")
     try manifestData.write(to: manifestTempURL)
-    
+
     let manifestSha1 = try sha1HexStream(fileURL: manifestTempURL)
     try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
     try? FileManager.default.removeItem(at: manifestTempURL)
-    
+
     await progress.printFinal()
     print("  📸 Snapshot manifest uploaded: \(manifestPath)")
 }
@@ -1781,17 +1830,17 @@ func runIncrementalBackup(config: AppConfig) async throws {
 
 func runMirror(config: AppConfig) async throws {
     let progress = ProgressTracker()
-    
+
     let excludeHidden = config.filters?.excludeHidden ?? true
     let folders = buildFoldersToScan(from: config)
-    
+
     // Scan
     var allFiles: [FileItem] = []
     for folder in folders {
         allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
     }
     allFiles = applyFilters(allFiles, filters: config.filters)
-    
+
     // Sort: Local first
     let sortedFiles = allFiles.sorted {
         if $0.status == $1.status {
@@ -1799,43 +1848,43 @@ func runMirror(config: AppConfig) async throws {
         }
         return $0.status == "Local"
     }
-    
+
     // Prepare B2 client
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let overallUploadTimeout = TimeInterval(config.timeouts?.overallUploadSeconds ?? 7200)
     let icloudTimeout = config.timeouts?.icloudDownloadSeconds ?? 1800
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
-    
+
     // Decide part size
     let recommendedPartSize = (try? await client.recommendedPartSizeBytes()) ?? (100 * 1024 * 1024)
     let configuredPartSizeMB = config.b2.partSizeMB
     let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
     let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
-    
+
     let remotePrefix = config.mirror?.remotePrefix ?? config.b2.remotePrefix ?? "mirror"
-    
+
     // Initialize progress tracker
     let totalBytes = sortedFiles.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
     await progress.initialize(totalFiles: sortedFiles.count, totalBytes: totalBytes)
-    
+
     print("\n\(boldColor)Starting mirror\(resetColor)")
     print("  📂 Files: \(sortedFiles.count)")
     print("  📦 Total size: \(formatBytes(totalBytes))")
     print("")
-    
+
     // Upload loop
     for file in sortedFiles {
         await progress.printProgress()
-        
+
         do {
             let url = file.url
             let status = file.status
-            
+
             if status == "Cloud" {
                 await progress.startFile(name: "☁️  \(url.lastPathComponent)")
                 await progress.printProgress()
-                
+
                 startDownloadIfNeeded(url: url)
                 let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
                     await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
@@ -1848,16 +1897,16 @@ func runMirror(config: AppConfig) async throws {
                 await progress.fileFailed()
                 continue
             }
-            
+
             let remoteName = remoteFileName(for: url, remotePrefix: remotePrefix)
             let contentType = guessContentType(for: url)
-            
+
             let size = file.size ?? (fileSize(url: url) ?? 0)
             let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
-            
+
             await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
             await progress.printProgress()
-            
+
             if size <= smallFileThreshold {
                 let sha1 = try sha1HexStream(fileURL: url)
                 try await withTimeoutVoid(overallUploadTimeout) {
@@ -1868,9 +1917,9 @@ func runMirror(config: AppConfig) async throws {
                     try await client.uploadLargeFile(fileURL: url, fileName: remoteName, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
                 }
             }
-            
+
             await progress.fileCompleted(bytes: size)
-            
+
             if status == "Cloud" {
                 evictIfUbiquitous(url: url)
             }
@@ -1880,7 +1929,7 @@ func runMirror(config: AppConfig) async throws {
             await progress.fileFailed()
         }
     }
-    
+
     await progress.printFinal()
 }
 
@@ -1888,21 +1937,21 @@ func runMirror(config: AppConfig) async throws {
 struct Runner {
     static func main() async {
         setupSignalHandlers()
-        
+
         let args = CommandLine.arguments
-        
+
         // Get command (first argument after program name)
         let command = args.count > 1 ? args[1] : "help"
-        
+
         switch command {
         case "help":
             printHelp()
             return
-            
+
         case "list":
             listICloudFolders()
             return
-            
+
         case "backup":
             do {
                 let configURL = readConfigURL(from: args)
@@ -1915,7 +1964,7 @@ struct Runner {
                 exit(1)
             }
             return
-            
+
         case "mirror":
             do {
                 let configURL = readConfigURL(from: args)
@@ -1928,7 +1977,7 @@ struct Runner {
                 exit(1)
             }
             return
-            
+
         case "cleanup":
             do {
                 let configURL = readConfigURL(from: args)
@@ -1941,7 +1990,7 @@ struct Runner {
                 exit(1)
             }
             return
-            
+
         default:
             print("\(errorColor)❌ Unknown command: '\(command)'\(resetColor)")
             print("Run 'kodema help' for usage information.\n")

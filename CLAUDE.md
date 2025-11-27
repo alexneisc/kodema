@@ -201,6 +201,21 @@ Package definition: `Package.swift` (in repository root)
 - Entry point: `@main struct Runner` (line 1887)
 - Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant
 
+## Code Style Guidelines
+
+**CRITICAL FORMATTING RULES** - Always follow these when editing code:
+
+1. **Empty Lines**: All empty lines in code must be completely empty (no spaces or tabs)
+   - Bad: `    ` (line with spaces/tabs)
+   - Good: `` (completely empty line)
+   - This keeps code clean and avoids whitespace-only lines in git diffs
+
+2. **Language**: All code, comments, documentation, and user-facing text must be in English
+   - Comments: `// Fetch latest snapshot` (not Ukrainian)
+   - Variable names: `latestManifest` (not transliterated or mixed)
+   - User output: `"No previous snapshots found"` (not localized)
+   - Exception: Only config examples in `config.example.yml` may contain non-English comments for user convenience
+
 ## Common Pitfalls
 
 1. **iCloud Timeouts**: Default 30min may be insufficient for large files on slow connections - increase `icloudDownloadSeconds`
