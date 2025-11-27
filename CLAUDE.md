@@ -80,15 +80,16 @@ kodema backup
 - Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
 - Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
 
-**Versioning & Snapshots (lines 70-86, 1026-1104)**
+**Versioning & Snapshots (lines 70-86, 1066-1149)**
 - `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
 - `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
+- `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
 - Storage structure:
   - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata
   - `backup/files/{relative_path}/{timestamp}` - versioned file content
-- `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against existing B2 versions
+- `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
 
-**Retention & Cleanup (lines 1354-1616)**
+**Retention & Cleanup (lines 1406-1666)**
 - Time Machine-style retention policy: hourly → daily → weekly → monthly
 - `classifySnapshot()`: Categorizes snapshots by age
 - `selectSnapshotsToKeep()`: Groups by time period, keeps latest in each bucket
@@ -102,32 +103,41 @@ kodema backup
 
 ### Command Flow
 
-**`kodema backup` (lines 1620-1778)**
+**`kodema help` (lines 1201-1222)**
+- Displays usage information, available commands, and examples
+- Aliases: `help`, `-h`, `--help`
+
+**`kodema version` (lines 1197-1199)**
+- Displays the current version of Kodema
+- Aliases: `version`, `-v`, `--version`
+- Version string is defined in `kodema/Version.swift`
+
+**`kodema list` (lines 1240-1402)**
+1. Enumerate iCloud containers in `~/Library/Mobile Documents/`
+2. Skip Apple system containers (com~apple~*)
+3. Show third-party app folders with file counts and sizes
+4. Helpful for discovering what to backup
+
+**`kodema backup` (lines 1670-1832)**
 1. Scan local files and apply filters
-2. Fetch existing B2 file versions (`listFiles()`)
-3. Determine which files changed (`fileNeedsBackup()`)
+2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
+3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
 4. Sort files (local first, then iCloud)
 5. Upload changed files with progress tracking
 6. Create and upload snapshot manifest
 7. Evict iCloud files to free disk space
 
-**`kodema mirror` (lines 1782-1885)**
+**`kodema mirror` (lines 1836-1939)**
 1. Scan all files
 2. Sort files (local first)
 3. Upload all files (no change detection)
 4. Simple flat structure in B2
 
-**`kodema cleanup` (lines 1465-1616)**
+**`kodema cleanup` (lines 1515-1666)**
 1. Fetch all snapshot manifests from B2
 2. Apply retention policy to select snapshots to keep
 3. Delete old snapshot manifests
 4. Find and delete orphaned file versions (not referenced by any kept snapshot)
-
-**`kodema list` (lines 1190-1352)**
-1. Enumerate iCloud containers in `~/Library/Mobile Documents/`
-2. Skip Apple system containers (com~apple~*)
-3. Show third-party app folders with file counts
-4. Helpful for discovering what to backup
 
 ### Key Design Decisions
 
@@ -196,10 +206,10 @@ Package definition: `Package.swift` (in repository root)
 
 ## Code Organization
 
-**Single File Architecture**: All code in `kodema/core.swift` (~1950 lines)
+**Single File Architecture**: All code in `kodema/core.swift` (~2000 lines)
 - MARK comments divide sections: Models, Helpers, B2 API, Commands
-- Entry point: `@main struct Runner` (line 1887)
-- Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant
+- Entry point: `@main struct Runner` (line 1941)
+- Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant and is used by `printVersion()` and `printHelp()`
 
 ## Code Style Guidelines
 
@@ -222,10 +232,10 @@ Package definition: `Package.swift` (in repository root)
 
 2. **Part Size**: Must be ≥ B2 minimum (5MB), configured in MB not bytes
 
-3. **File Size Threshold**: Currently 5GB (line 1720, 1856) - could make configurable
+3. **File Size Threshold**: Currently 5GB (lines 1774, 1910) - could make configurable
 
 4. **Retention Cleanup**: Irreversible! Users should test policy before running cleanup
 
 5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
 
-6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1890)
+6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1944)
