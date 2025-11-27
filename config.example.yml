@@ -1,0 +1,160 @@
+# Kodema Configuration Example
+# Copy this to ~/.config/kodema/config.yml and customize
+
+# ============================================================================
+# B2 Credentials (REQUIRED)
+# ============================================================================
+# Get these from: https://secure.backblaze.com/app_keys.htm
+b2:
+  keyID: "your_key_id_here"
+  applicationKey: "your_application_key_here"
+  bucketName: "my-backup-bucket"
+  
+  # Optional: specify bucket ID directly (faster authorization)
+  # bucketId: "abc123def456"
+  
+  # Upload settings
+  partSizeMB: 100                    # Part size for large files (min 5 MB)
+  maxRetries: 3                      # Retry failed uploads
+  uploadConcurrency: 1               # Parallel uploads (1 = sequential)
+
+# ============================================================================
+# Timeouts (OPTIONAL)
+# ============================================================================
+# Adjust these based on your internet speed and file sizes
+timeouts:
+  icloudDownloadSeconds: 1800        # 30 minutes - time to download from iCloud
+  networkSeconds: 300                # 5 minutes - timeout per network request
+  overallUploadSeconds: 7200         # 2 hours - max time per file upload
+
+# ============================================================================
+# Folders to Backup (OPTIONAL)
+# ============================================================================
+# If not specified, defaults to all iCloud Drive top-level folders
+# Run 'kodema list' to discover your iCloud folders!
+include:
+  folders:
+    # Standard macOS folders
+    - ~/Documents
+    - ~/Desktop
+    
+    # iCloud app examples (run 'kodema list' to find yours)
+    # - ~/Library/Mobile Documents/iCloud~md~obsidian/Documents
+    # - ~/Library/Mobile Documents/27N4MQEA55~pro~writer/Documents
+    # - ~/Library/Mobile Documents/com~apple~CloudDocs
+    
+    # External drives
+    # - /Volumes/ExternalDrive/Important
+
+# ============================================================================
+# File Filters (OPTIONAL)
+# ============================================================================
+filters:
+  excludeHidden: true                # Skip hidden files (starting with .)
+  
+  # Size filters (in bytes)
+  minSizeBytes: 0                    # Skip empty files
+  maxSizeBytes: 10737418240          # Skip files larger than 10 GB
+  
+  # Glob patterns to exclude
+  excludeGlobs:
+    # Temporary files
+    - "*.tmp"
+    - "*.temp"
+    - "*.cache"
+    
+    # System files
+    - "**/.DS_Store"
+    - "**/.localized"
+    - "**/.Spotlight-V100/**"
+    - "**/.Trashes/**"
+    - "**/.fseventsd/**"
+    
+    # Development
+    - "**/node_modules/**"
+    - "**/__pycache__/**"
+    - "**/venv/**"
+    - "**/.venv/**"
+    
+    # Build artifacts
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/.build/**"
+    
+    # Trash
+    - "~/.Trash/**"
+
+# ============================================================================
+# Incremental Backup Settings (for 'kodema backup' command)
+# ============================================================================
+backup:
+  # Remote path prefix in B2 bucket
+  remotePrefix: "backup"
+  
+  # Time Machine-style retention policy
+  # This creates a graduated backup schedule:
+  # - Recent: Keep everything (highest detail)
+  # - Medium term: Keep daily snapshots
+  # - Long term: Keep weekly/monthly snapshots
+  retention:
+    hourly: 24      # Keep ALL snapshots from last 24 hours
+    daily: 30       # Keep ONE snapshot per day for last 30 days
+    weekly: 12      # Keep ONE snapshot per week for last 12 weeks (~3 months)
+    monthly: 12     # Keep ONE snapshot per month for last 12 months
+  
+  # Example retention schedules for different needs:
+  
+  # MINIMAL (for testing)
+  # retention:
+  #   hourly: 6      # Last 6 hours
+  #   daily: 7       # Last week
+  #   weekly: 4      # Last month
+  #   monthly: 3     # Last quarter
+  
+  # STANDARD (recommended for most users)
+  # retention:
+  #   hourly: 24     # Last day
+  #   daily: 30      # Last month
+  #   weekly: 12     # Last 3 months
+  #   monthly: 12    # Last year
+  
+  # AGGRESSIVE (more backups, more storage)
+  # retention:
+  #   hourly: 48     # Last 2 days
+  #   daily: 90      # Last 3 months
+  #   weekly: 52     # Last year
+  #   monthly: 24    # Last 2 years
+  
+  # LONG-TERM ARCHIVE
+  # retention:
+  #   hourly: 24     # Last day
+  #   daily: 30      # Last month
+  #   weekly: 12     # Last 3 months
+  #   monthly: 60    # Last 5 years
+
+# ============================================================================
+# Mirror Settings (for 'kodema mirror' command)
+# ============================================================================
+mirror:
+  # Remote path prefix in B2 bucket
+  remotePrefix: "mirror"
+
+# ============================================================================
+# NOTES
+# ============================================================================
+
+# File paths:
+# - Use ~ for home directory (e.g., ~/Documents)
+# - Absolute paths work too (e.g., /Volumes/Backup)
+
+# Glob patterns:
+# - * matches anything except /
+# - ** matches anything including /
+# - ? matches single character
+# - [abc] matches a, b, or c
+# - Patterns are case-insensitive on macOS
+
+# Retention policy:
+# - 'hourly: 24' means "for the last 24 hours, keep ALL snapshots"
+# - 'daily: 30' means "for the last 30 days, keep ONE snapshot per day"
+# - Older snapshots are automatically deleted by 'kodema cleanup'

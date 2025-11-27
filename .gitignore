@@ -1,0 +1,56 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Swift build artifacts
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+
+# Xcode
+xcuserdata/
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+DerivedData/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Configuration files with secrets
+config.yml
+*.local.yml
+**/config/kodema/config.yml
+
+# Logs
+*.log
+/tmp/
+/logs/
+
+# Test artifacts
+test-backup/
+test-output/
+
+# Claude Code (optional - can be committed if desired)
+.claude/
+
+# Binary releases
+kodema
+!kodema/
+# Release artifacts (temporary)
+RELEASE_NOTES_*.md

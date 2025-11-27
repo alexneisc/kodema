@@ -1,0 +1,216 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Kodema is a macOS backup tool written in Swift that backs up iCloud Drive and local files to Backblaze B2 cloud storage. It supports two modes: incremental backup with versioning (Time Machine-style) and simple mirroring.
+
+## Build & Development Commands
+
+### Building
+```bash
+# Debug build
+swift build
+
+# Release build (optimized)
+swift build -c release
+# OR
+make release
+
+# Run without installing
+swift run kodema help
+.build/release/kodema help
+```
+
+### Installation
+```bash
+# Install to /usr/local/bin
+make install
+# OR
+sudo cp .build/release/kodema /usr/local/bin/
+
+# Uninstall
+make uninstall
+```
+
+### Testing
+```bash
+# Create test config first
+mkdir -p ~/.config/kodema
+cp kodema/config.example.yml ~/.config/kodema/config.yml
+# Edit config with your B2 credentials
+
+# Test with discovery
+kodema list
+
+# Test backup with small folder
+mkdir -p ~/Documents/kodema-test
+echo "test" > ~/Documents/kodema-test/test.txt
+kodema backup
+```
+
+## Architecture
+
+### Core Components (kodema/core.swift)
+
+**Configuration System (lines 6-59)**
+- YAML-based config loading via Yams library
+- Nested config structs: `B2Config`, `TimeoutsConfig`, `IncludeConfig`, `FiltersConfig`, `RetentionConfig`, `BackupConfig`, `MirrorConfig`
+- Default config location: `~/.config/kodema/config.yml`
+
+**File Discovery & Scanning (lines 388-449)**
+- `buildFoldersToScan()`: Determines folders to backup (custom list or all iCloud Drive folders)
+- `scanFolder()`: Recursively scans directories using `FileManager.enumerator`
+- `checkFileStatus()`: Detects if file is local or in iCloud (not yet downloaded)
+
+**iCloud Integration (lines 295-364)**
+- `startDownloadIfNeeded()`: Triggers iCloud file download
+- `waitForICloudDownload()`: Polls until file is locally available (with timeout)
+- `evictIfUbiquitous()`: Removes local copy after upload to save disk space
+- Uses `URLResourceKey`: `.isUbiquitousItemKey`, `.ubiquitousItemDownloadingStatusKey`
+
+**B2 API Client (lines 686-1024)**
+- `B2Client` class handles all Backblaze API operations
+- Auth flow: `ensureAuthorized()` → caches `B2AuthorizeResponse`
+- Bucket resolution: `ensureBucketId()` resolves bucket name to ID
+- Upload strategies:
+  - Small files (≤5GB): `uploadSmallFile()` uses `httpBodyStream` to avoid loading entire file in RAM
+  - Large files (>5GB): `uploadLargeFile()` splits into parts, uploads with retry logic
+- Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
+- Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
+
+**Versioning & Snapshots (lines 70-86, 1026-1104)**
+- `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
+- `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
+- Storage structure:
+  - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata
+  - `backup/files/{relative_path}/{timestamp}` - versioned file content
+- `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against existing B2 versions
+
+**Retention & Cleanup (lines 1354-1616)**
+- Time Machine-style retention policy: hourly → daily → weekly → monthly
+- `classifySnapshot()`: Categorizes snapshots by age
+- `selectSnapshotsToKeep()`: Groups by time period, keeps latest in each bucket
+- Cleanup deletes both snapshot manifests and orphaned file versions
+
+**Progress Tracking (lines 96-239)**
+- `ProgressTracker` actor: Thread-safe progress state
+- ANSI terminal UI: progress bar, speed, ETA, current file
+- Cursor management: hides cursor during progress, restores on exit/error
+- Signal handlers (SIGINT, SIGTERM): Ensure cursor is shown before exit
+
+### Command Flow
+
+**`kodema backup` (lines 1620-1778)**
+1. Scan local files and apply filters
+2. Fetch existing B2 file versions (`listFiles()`)
+3. Determine which files changed (`fileNeedsBackup()`)
+4. Sort files (local first, then iCloud)
+5. Upload changed files with progress tracking
+6. Create and upload snapshot manifest
+7. Evict iCloud files to free disk space
+
+**`kodema mirror` (lines 1782-1885)**
+1. Scan all files
+2. Sort files (local first)
+3. Upload all files (no change detection)
+4. Simple flat structure in B2
+
+**`kodema cleanup` (lines 1465-1616)**
+1. Fetch all snapshot manifests from B2
+2. Apply retention policy to select snapshots to keep
+3. Delete old snapshot manifests
+4. Find and delete orphaned file versions (not referenced by any kept snapshot)
+
+**`kodema list` (lines 1190-1352)**
+1. Enumerate iCloud containers in `~/Library/Mobile Documents/`
+2. Skip Apple system containers (com~apple~*)
+3. Show third-party app folders with file counts
+4. Helpful for discovering what to backup
+
+### Key Design Decisions
+
+**Streaming for Large Files**
+- Uses `InputStream` for uploads and chunked reading for SHA1 to avoid RAM limits
+- SHA1 computed in 8MB chunks (`sha1HexStream()`)
+
+**Async/Await Concurrency**
+- Main logic uses Swift async/await (requires macOS 13+, Swift 6.0)
+- `ProgressTracker` is an actor for thread-safe state management
+- Timeout wrappers (`withTimeoutVoid`, `withTimeoutDataResponse`) - currently no-ops but structured for future timeout enforcement
+
+**Error Handling Strategy**
+- B2 errors mapped to `B2Error` enum: `.unauthorized`, `.expiredUploadUrl`, `.temporary`, `.client`
+- Upload URL expiration handled transparently with retry
+- 5xx errors trigger exponential backoff
+- File-level failures tracked but don't abort entire backup
+
+**Glob Pattern Filtering (lines 451-527)**
+- Custom glob implementation using `fnmatch()` from Darwin
+- Special handling for directory patterns: `/**` and trailing `/`
+- Supports tilde expansion: `~/.Trash/**`
+
+## Important Implementation Notes
+
+### When Adding Features
+
+**Config Changes**: Update both `config.example.yml` and the Decodable structs in core.swift (lines 6-59)
+
+**New B2 Operations**: Follow the pattern in `B2Client`:
+- Add response struct conforming to `Decodable`
+- Implement retry logic with `mapHTTPErrorToB2()`
+- Use `session.data(for:timeout:)` extension (line 546)
+
+**Progress Updates**: Call `await progress.printProgress()` before and after long operations
+
+**iCloud File Handling**: Always check `checkFileStatus()` before accessing files, use `startDownloadIfNeeded()` + `waitForICloudDownload()` for cloud files
+
+### Testing Considerations
+
+**No Tests Yet**: Test infrastructure not implemented (Makefile line 38)
+
+**Manual Testing Approach**:
+1. Use `kodema list` to verify iCloud access
+2. Test with small folder first
+3. Verify uploads in B2 web interface
+4. Test retention with `kodema cleanup --dry-run` (not implemented, would need to add)
+
+### Glob Pattern Examples
+```yaml
+excludeGlobs:
+  - "*.tmp"              # Match extension
+  - "**/.DS_Store"       # Match anywhere
+  - "**/node_modules/**" # Exclude directory contents
+  - "~/Downloads/**"     # Absolute path with tilde
+  - "/Volumes/Backup/"   # Directory prefix (trailing slash)
+```
+
+## Dependencies
+
+- **Yams** (6.2.0+): YAML parsing for config
+- **CommonCrypto**: SHA1 hashing (macOS system framework)
+- **Foundation**: File system, networking, iCloud APIs
+
+Package definition: `Package.swift` (in repository root)
+
+## Code Organization
+
+**Single File Architecture**: All code in `kodema/core.swift` (~1950 lines)
+- MARK comments divide sections: Models, Helpers, B2 API, Commands
+- Entry point: `@main struct Runner` (line 1887)
+- Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant
+
+## Common Pitfalls
+
+1. **iCloud Timeouts**: Default 30min may be insufficient for large files on slow connections - increase `icloudDownloadSeconds`
+
+2. **Part Size**: Must be ≥ B2 minimum (5MB), configured in MB not bytes
+
+3. **File Size Threshold**: Currently 5GB (line 1720, 1856) - could make configurable
+
+4. **Retention Cleanup**: Irreversible! Users should test policy before running cleanup
+
+5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
+
+6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1890)

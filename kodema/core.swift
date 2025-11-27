@@ -33,11 +33,29 @@ struct FiltersConfig: Decodable {
     let excludeGlobs: [String]?
 }
 
+struct RetentionConfig: Decodable {
+    let hourly: Int?    // keep all versions for last N hours
+    let daily: Int?     // keep daily versions for last N days
+    let weekly: Int?    // keep weekly versions for last N weeks
+    let monthly: Int?   // keep monthly versions for last N months
+}
+
+struct BackupConfig: Decodable {
+    let remotePrefix: String?
+    let retention: RetentionConfig?
+}
+
+struct MirrorConfig: Decodable {
+    let remotePrefix: String?
+}
+
 struct AppConfig: Decodable {
     let b2: B2Config
     let timeouts: TimeoutsConfig?
     let include: IncludeConfig?
     let filters: FiltersConfig?
+    let backup: BackupConfig?
+    let mirror: MirrorConfig?
 }
 
 // MARK: - FileItem
@@ -46,6 +64,24 @@ struct FileItem {
     let url: URL
     let status: String   // "Local" | "Cloud" | "Error"
     let size: Int64?
+    let modificationDate: Date?
+}
+
+// MARK: - Snapshot & Versioning
+
+struct FileVersionInfo: Codable {
+    let path: String           // relative path from scan root
+    let size: Int64
+    let modificationDate: Date
+    let versionTimestamp: String  // "2024-11-27_143022"
+}
+
+struct SnapshotManifest: Codable {
+    let timestamp: String      // "2024-11-27_143022"
+    let createdAt: Date
+    let files: [FileVersionInfo]
+    let totalFiles: Int
+    let totalBytes: Int64
 }
 
 // MARK: - Constants / ANSI colors
@@ -339,6 +375,15 @@ func fileSize(url: URL) -> Int64? {
     }
 }
 
+func fileModificationDate(url: URL) -> Date? {
+    do {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        return attrs[.modificationDate] as? Date
+    } catch {
+        return nil
+    }
+}
+
 // MARK: - Scanning
 
 func buildFoldersToScan(from config: AppConfig) -> [URL] {
@@ -381,7 +426,8 @@ func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
                                                     .isRegularFileKey,
                                                     .isUbiquitousItemKey,
                                                     .ubiquitousItemDownloadingStatusKey,
-                                                    .fileSizeKey
+                                                    .fileSizeKey,
+                                                    .contentModificationDateKey
                                                   ],
                                                   options: options) else {
         return []
@@ -392,7 +438,8 @@ func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
             if values.isRegularFile == true {
                 let status = checkFileStatus(url: fileURL)
                 let size = fileSize(url: fileURL)
-                files.append(FileItem(url: fileURL, status: status, size: size))
+                let mtime = fileModificationDate(url: fileURL)
+                files.append(FileItem(url: fileURL, status: status, size: size, modificationDate: mtime))
             }
         } catch {
             continue
@@ -613,6 +660,25 @@ struct B2GetUploadPartUrlResponse: Decodable {
 struct B2FinishLargeFileResponse: Decodable {
     let fileId: String
     let fileName: String
+}
+
+struct B2FileInfo: Decodable {
+    let fileId: String
+    let fileName: String
+    let contentLength: Int64
+    let uploadTimestamp: Int64?
+    
+    enum CodingKeys: String, CodingKey {
+        case fileId
+        case fileName
+        case contentLength
+        case uploadTimestamp
+    }
+}
+
+struct B2ListFileNamesResponse: Decodable {
+    let files: [B2FileInfo]
+    let nextFileName: String?
 }
 
 // MARK: - B2 Client (async)
@@ -891,6 +957,150 @@ final class B2Client {
         guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
         return auth.absoluteMinimumPartSize
     }
+    
+    // List files with prefix
+    func listFiles(prefix: String, maxFileCount: Int = 10000) async throws -> [B2FileInfo] {
+        try await ensureAuthorized()
+        let bid = try await ensureBucketId()
+        guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
+        
+        var allFiles: [B2FileInfo] = []
+        var startFileName: String? = nil
+        
+        repeat {
+            guard let url = URL(string: "\(auth.apiUrl)/b2api/v2/b2_list_file_names") else {
+                throw HTTPError.invalidURL
+            }
+            
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
+            req.addValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            
+            var body: [String: Any] = [
+                "bucketId": bid,
+                "maxFileCount": maxFileCount,
+                "prefix": prefix
+            ]
+            if let start = startFileName {
+                body["startFileName"] = start
+            }
+            req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+            
+            do {
+                let (data, _) = try await session.data(for: req, timeout: networkTimeout)
+                let response = try JSONDecoder().decode(B2ListFileNamesResponse.self, from: data)
+                allFiles.append(contentsOf: response.files)
+                startFileName = response.nextFileName
+            } catch {
+                throw mapHTTPErrorToB2(error)
+            }
+        } while startFileName != nil
+        
+        return allFiles
+    }
+    
+    // Delete file version
+    func deleteFileVersion(fileName: String, fileId: String) async throws {
+        try await ensureAuthorized()
+        guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
+        guard let url = URL(string: "\(auth.apiUrl)/b2api/v2/b2_delete_file_version") else {
+            throw HTTPError.invalidURL
+        }
+        
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
+        req.addValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["fileName": fileName, "fileId": fileId]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        
+        do {
+            _ = try await session.data(for: req, timeout: networkTimeout)
+        } catch {
+            throw mapHTTPErrorToB2(error)
+        }
+    }
+}
+
+// MARK: - Snapshot helpers
+
+func generateTimestamp() -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+    formatter.timeZone = TimeZone.current
+    return formatter.string(from: Date())
+}
+
+func parseTimestamp(_ timestamp: String) -> Date? {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+    formatter.timeZone = TimeZone.current
+    return formatter.date(from: timestamp)
+}
+
+// Build relative path from home or scan root
+func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
+    let localPath = localURL.path
+    
+    // Try to find matching scan root
+    for root in scanRoots {
+        if localPath.hasPrefix(root.path) {
+            let relative = String(localPath.dropFirst(root.path.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return relative
+        }
+    }
+    
+    // Fallback to home-relative
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    if localPath.hasPrefix(home.path) {
+        return String(localPath.dropFirst(home.path.count))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+    
+    return localURL.lastPathComponent
+}
+
+// Check if file needs backup based on size + mtime
+func fileNeedsBackup(file: FileItem, existingVersions: [B2FileInfo], relativePath: String, timestamp: String, remotePrefix: String) -> Bool {
+    guard let localSize = file.size, let localMtime = file.modificationDate else {
+        return true // If we can't get info, assume it needs backup
+    }
+    
+    // Build the expected remote path for this version
+    let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+    
+    // Check if this exact version already exists
+    let existsWithSameVersion = existingVersions.contains { b2File in
+        b2File.fileName == versionPath && b2File.contentLength == localSize
+    }
+    
+    if existsWithSameVersion {
+        return false // Already uploaded this version
+    }
+    
+    // Check if ANY version exists with same size and similar mtime (within 1 second tolerance)
+    let existsWithSameMtime = existingVersions.contains { b2File in
+        guard b2File.fileName.hasPrefix("\(remotePrefix)/files/\(relativePath)/") else {
+            return false
+        }
+        
+        // Extract timestamp from path
+        let components = b2File.fileName.split(separator: "/")
+        guard let versionTimestamp = components.last.map(String.init),
+              let versionDate = parseTimestamp(versionTimestamp) else {
+            return false
+        }
+        
+        // Compare size and mtime (with 1 second tolerance)
+        let mtimeMatch = abs(versionDate.timeIntervalSince(localMtime)) < 1.0
+        let sizeMatch = b2File.contentLength == localSize
+        
+        return mtimeMatch && sizeMatch
+    }
+    
+    return !existsWithSameMtime
 }
 
 // MARK: - Remote path building
@@ -945,13 +1155,19 @@ func printHelp() {
     print("\nUsage:")
     print("  kodema <command> [options]")
     print("\nCommands:")
-    print("  \(boldColor)backup\(resetColor) [config_path]    Run backup with specified config")
+    print("  \(boldColor)backup\(resetColor) [config_path]    Incremental backup with snapshots and versioning")
+    print("  \(boldColor)mirror\(resetColor) [config_path]    Simple mirroring (uploads all files)")
+    print("  \(boldColor)cleanup\(resetColor) [config_path]   Clean up old backup versions per retention policy")
     print("  \(boldColor)list\(resetColor)                   List all folders in iCloud Drive")
     print("  \(boldColor)help\(resetColor)                   Show this help message")
     print("\nExamples:")
-    print("  kodema backup                 Run with default config (~/.config/kodema/config.yml)")
-    print("  kodema backup ~/my-config.yml Run with custom config")
-    print("  kodema list                   Discover iCloud folders and their contents")
+    print("  kodema backup                 Incremental backup with default config")
+    print("  kodema mirror ~/my-config.yml Simple mirror with custom config")
+    print("  kodema cleanup                Clean up old versions")
+    print("  kodema list                   Discover iCloud folders")
+    print("\n\(boldColor)Backup vs Mirror:\(resetColor)")
+    print("  • \(boldColor)backup\(resetColor) - Creates versioned snapshots, only uploads changed files")
+    print("  • \(boldColor)mirror\(resetColor) - Uploads all files every time, no versioning")
     print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
 }
 
@@ -1135,6 +1351,539 @@ func listICloudFolders() {
     }
 }
 
+// MARK: - Retention & Cleanup Logic
+
+struct SnapshotInfo {
+    let timestamp: String
+    let date: Date
+    let manifestPath: String
+}
+
+enum RetentionBucket {
+    case hourly
+    case daily
+    case weekly
+    case monthly
+    case tooOld
+}
+
+func classifySnapshot(date: Date, now: Date, retention: RetentionConfig) -> RetentionBucket {
+    let interval = now.timeIntervalSince(date)
+    let hours = interval / 3600
+    let days = interval / 86400
+    let weeks = interval / (86400 * 7)
+    let months = interval / (86400 * 30.44) // Average month length
+    
+    if let hourlyLimit = retention.hourly, hours < Double(hourlyLimit) {
+        return .hourly
+    }
+    if let dailyLimit = retention.daily, days < Double(dailyLimit) {
+        return .daily
+    }
+    if let weeklyLimit = retention.weekly, weeks < Double(weeklyLimit) {
+        return .weekly
+    }
+    if let monthlyLimit = retention.monthly, months < Double(monthlyLimit) {
+        return .monthly
+    }
+    
+    return .tooOld
+}
+
+func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig) -> Set<String> {
+    var toKeep = Set<String>()
+    let now = Date()
+    
+    // Group snapshots by bucket
+    var hourlySnapshots: [SnapshotInfo] = []
+    var dailySnapshots: [SnapshotInfo] = []
+    var weeklySnapshots: [SnapshotInfo] = []
+    var monthlySnapshots: [SnapshotInfo] = []
+    
+    for snapshot in snapshots {
+        let bucket = classifySnapshot(date: snapshot.date, now: now, retention: retention)
+        switch bucket {
+        case .hourly:
+            hourlySnapshots.append(snapshot)
+        case .daily:
+            dailySnapshots.append(snapshot)
+        case .weekly:
+            weeklySnapshots.append(snapshot)
+        case .monthly:
+            monthlySnapshots.append(snapshot)
+        case .tooOld:
+            break // Will be deleted
+        }
+    }
+    
+    // Hourly: keep all
+    for snapshot in hourlySnapshots {
+        toKeep.insert(snapshot.timestamp)
+    }
+    
+    // Daily: keep one per day (the latest one each day)
+    let dailyGroups = Dictionary(grouping: dailySnapshots) { snapshot -> String in
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: snapshot.date)
+    }
+    for (_, group) in dailyGroups {
+        if let latest = group.max(by: { $0.date < $1.date }) {
+            toKeep.insert(latest.timestamp)
+        }
+    }
+    
+    // Weekly: keep one per week (the latest one each week)
+    let calendar = Calendar.current
+    let weeklyGroups = Dictionary(grouping: weeklySnapshots) { snapshot -> String in
+        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: snapshot.date)
+        return "\(components.yearForWeekOfYear ?? 0)-W\(components.weekOfYear ?? 0)"
+    }
+    for (_, group) in weeklyGroups {
+        if let latest = group.max(by: { $0.date < $1.date }) {
+            toKeep.insert(latest.timestamp)
+        }
+    }
+    
+    // Monthly: keep one per month (the latest one each month)
+    let monthlyGroups = Dictionary(grouping: monthlySnapshots) { snapshot -> String in
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: snapshot.date)
+    }
+    for (_, group) in monthlyGroups {
+        if let latest = group.max(by: { $0.date < $1.date }) {
+            toKeep.insert(latest.timestamp)
+        }
+    }
+    
+    return toKeep
+}
+
+// MARK: - Cleanup command
+
+func runCleanup(config: AppConfig) async throws {
+    guard let retention = config.backup?.retention else {
+        print("\(errorColor)❌ No retention policy configured\(resetColor)")
+        print("Add a retention policy to your config.yml under backup.retention")
+        return
+    }
+    
+    print("\n\(boldColor)Starting cleanup\(resetColor)")
+    print("  🧹 Retention policy:")
+    if let h = retention.hourly { print("     Hourly: \(h) hours") }
+    if let d = retention.daily { print("     Daily: \(d) days") }
+    if let w = retention.weekly { print("     Weekly: \(w) weeks") }
+    if let m = retention.monthly { print("     Monthly: \(m) months") }
+    print("")
+    
+    // Prepare B2 client
+    let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+    let maxRetries = config.b2.maxRetries ?? 3
+    let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+    
+    let remotePrefix = config.backup?.remotePrefix ?? "backup"
+    
+    // Fetch all snapshots
+    print("  ☁️  Fetching snapshots from B2...")
+    let snapshotFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
+    
+    // Parse snapshot list
+    var snapshots: [SnapshotInfo] = []
+    for file in snapshotFiles {
+        // Expected format: backup/snapshots/2024-11-27_143022/manifest.json
+        let components = file.fileName.split(separator: "/")
+        guard components.count >= 3,
+              let timestampStr = components[components.count - 2] as? Substring,
+              let date = parseTimestamp(String(timestampStr)) else {
+            continue
+        }
+        snapshots.append(SnapshotInfo(
+            timestamp: String(timestampStr),
+            date: date,
+            manifestPath: file.fileName
+        ))
+    }
+    
+    print("  ✓ Found \(snapshots.count) snapshots")
+    
+    if snapshots.isEmpty {
+        print("  ℹ️  No snapshots to clean up")
+        return
+    }
+    
+    // Select snapshots to keep
+    let toKeep = selectSnapshotsToKeep(snapshots: snapshots, retention: retention)
+    let toDelete = snapshots.filter { !toKeep.contains($0.timestamp) }
+    
+    print("  📊 Analysis:")
+    print("     Keep: \(toKeep.count) snapshots")
+    print("     Delete: \(toDelete.count) snapshots")
+    
+    if toDelete.isEmpty {
+        print("  ✅ Nothing to clean up")
+        return
+    }
+    
+    print("\n  \(boldColor)Snapshots to delete:\(resetColor)")
+    for snapshot in toDelete.prefix(10).sorted(by: { $0.date < $1.date }) {
+        print("     \(dimColor)• \(snapshot.timestamp)\(resetColor)")
+    }
+    if toDelete.count > 10 {
+        print("     \(dimColor)... and \(toDelete.count - 10) more\(resetColor)")
+    }
+    
+    // Confirm deletion
+    print("\n  \(errorColor)⚠️  This will permanently delete \(toDelete.count) snapshots!\(resetColor)")
+    print("  Type 'yes' to continue: ", terminator: "")
+    fflush(stdout)
+    
+    guard let response = readLine(), response.lowercased() == "yes" else {
+        print("  ℹ️  Cleanup cancelled")
+        return
+    }
+    
+    print("\n  🗑️  Deleting snapshots...")
+    
+    // Delete snapshot manifests
+    var deletedSnapshots = 0
+    for snapshot in toDelete {
+        do {
+            // Find manifest file
+            let manifestFiles = snapshotFiles.filter { $0.fileName.contains(snapshot.timestamp) }
+            for file in manifestFiles {
+                try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
+            }
+            deletedSnapshots += 1
+            print("     \(dimColor)✓ Deleted \(snapshot.timestamp)\(resetColor)")
+        } catch {
+            print("     \(errorColor)✗ Failed to delete \(snapshot.timestamp): \(error)\(resetColor)")
+        }
+    }
+    
+    print("\n  🧹 Cleaning up orphaned file versions...")
+    
+    // Fetch all file versions
+    let allFileVersions = try await client.listFiles(prefix: "\(remotePrefix)/files/")
+    
+    // Build set of version timestamps that are still referenced by kept snapshots
+    var referencedVersions = Set<String>()
+    for snapshot in snapshots where toKeep.contains(snapshot.timestamp) {
+        referencedVersions.insert(snapshot.timestamp)
+    }
+    
+    // Find orphaned versions (versions not in any kept snapshot)
+    var orphanedVersions: [(file: B2FileInfo, versionTimestamp: String)] = []
+    for file in allFileVersions {
+        // Expected format: backup/files/Documents/myfile.txt/2024-11-27_143022
+        let components = file.fileName.split(separator: "/")
+        guard let versionTimestamp = components.last.map(String.init) else {
+            continue
+        }
+        
+        if !referencedVersions.contains(versionTimestamp) {
+            orphanedVersions.append((file, versionTimestamp))
+        }
+    }
+    
+    print("     Found \(orphanedVersions.count) orphaned file versions")
+    
+    if orphanedVersions.isEmpty {
+        print("     ✓ No orphaned versions to delete")
+    } else {
+        var deletedVersions = 0
+        for (file, _) in orphanedVersions {
+            do {
+                try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
+                deletedVersions += 1
+                if deletedVersions % 100 == 0 {
+                    print("     \(dimColor)Deleted \(deletedVersions)/\(orphanedVersions.count) versions...\(resetColor)")
+                }
+            } catch {
+                print("     \(errorColor)✗ Failed to delete \(file.fileName): \(error)\(resetColor)")
+            }
+        }
+        print("     ✓ Deleted \(deletedVersions) orphaned versions")
+    }
+    
+    print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+    print("\(boldColor)Cleanup Complete!\(resetColor)")
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+    print("  🗑️  Deleted \(deletedSnapshots) snapshots")
+    print("  🧹 Cleaned up orphaned file versions")
+    print("  ✅ Retained \(toKeep.count) snapshots")
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+}
+
+// MARK: - Main backup logic (incremental with snapshots)
+
+func runIncrementalBackup(config: AppConfig) async throws {
+    let progress = ProgressTracker()
+    
+    let excludeHidden = config.filters?.excludeHidden ?? true
+    let folders = buildFoldersToScan(from: config)
+    
+    // Scan local files
+    var allFiles: [FileItem] = []
+    for folder in folders {
+        allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
+    }
+    allFiles = applyFilters(allFiles, filters: config.filters)
+    
+    // Prepare B2 client
+    let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+    let overallUploadTimeout = TimeInterval(config.timeouts?.overallUploadSeconds ?? 7200)
+    let icloudTimeout = config.timeouts?.icloudDownloadSeconds ?? 1800
+    let maxRetries = config.b2.maxRetries ?? 3
+    let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+    
+    // Generate snapshot timestamp
+    let timestamp = generateTimestamp()
+    let remotePrefix = config.backup?.remotePrefix ?? "backup"
+    
+    print("\n\(boldColor)Starting incremental backup\(resetColor)")
+    print("  📸 Snapshot: \(timestamp)")
+    print("  📂 Scanned files: \(allFiles.count)")
+    
+    // Fetch existing files from B2
+    print("  ☁️  Fetching existing files from B2...")
+    let existingFiles = try await client.listFiles(prefix: "\(remotePrefix)/files/")
+    print("  ✓ Found \(existingFiles.count) existing file versions")
+    
+    // Determine which files need backup
+    var filesToBackup: [(file: FileItem, relativePath: String)] = []
+    for file in allFiles {
+        let relativePath = buildRelativePath(for: file.url, from: folders)
+        if fileNeedsBackup(file: file, existingVersions: existingFiles, relativePath: relativePath, timestamp: timestamp, remotePrefix: remotePrefix) {
+            filesToBackup.append((file, relativePath))
+        }
+    }
+    
+    print("  📤 Files to upload: \(filesToBackup.count) (skipping \(allFiles.count - filesToBackup.count) unchanged)")
+    
+    // Sort: Local first
+    filesToBackup.sort {
+        if $0.file.status == $1.file.status {
+            return $0.file.url.lastPathComponent.lowercased() < $1.file.url.lastPathComponent.lowercased()
+        }
+        return $0.file.status == "Local"
+    }
+    
+    // Decide part size
+    let recommendedPartSize = (try? await client.recommendedPartSizeBytes()) ?? (100 * 1024 * 1024)
+    let configuredPartSizeMB = config.b2.partSizeMB
+    let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
+    let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
+    
+    // Initialize progress
+    let totalBytes = filesToBackup.reduce(Int64(0)) { $0 + ($1.file.size ?? 0) }
+    await progress.initialize(totalFiles: filesToBackup.count, totalBytes: totalBytes)
+    print("")
+    
+    // Upload files & build manifest
+    var manifestFiles: [FileVersionInfo] = []
+    
+    for (file, relativePath) in filesToBackup {
+        await progress.printProgress()
+        
+        do {
+            let url = file.url
+            let status = file.status
+            
+            // Handle iCloud downloads
+            if status == "Cloud" {
+                await progress.startFile(name: "☁️  \(url.lastPathComponent)")
+                await progress.printProgress()
+                
+                startDownloadIfNeeded(url: url)
+                let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
+                    await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
+                }
+                if !ok {
+                    await progress.fileFailed()
+                    continue
+                }
+            } else if status == "Error" {
+                await progress.fileFailed()
+                continue
+            }
+            
+            // Upload to versioned path
+            let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+            let contentType = guessContentType(for: url)
+            let size = file.size ?? (fileSize(url: url) ?? 0)
+            let mtime = file.modificationDate ?? Date()
+            
+            await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
+            await progress.printProgress()
+            
+            let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
+            
+            if size <= smallFileThreshold {
+                let sha1 = try sha1HexStream(fileURL: url)
+                try await withTimeoutVoid(overallUploadTimeout) {
+                    try await client.uploadSmallFile(fileURL: url, fileName: versionPath, contentType: contentType, sha1Hex: sha1)
+                }
+            } else {
+                try await withTimeoutVoid(overallUploadTimeout) {
+                    try await client.uploadLargeFile(fileURL: url, fileName: versionPath, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
+                }
+            }
+            
+            await progress.fileCompleted(bytes: size)
+            
+            // Add to manifest
+            manifestFiles.append(FileVersionInfo(
+                path: relativePath,
+                size: size,
+                modificationDate: mtime,
+                versionTimestamp: timestamp
+            ))
+            
+            if status == "Cloud" {
+                evictIfUbiquitous(url: url)
+            }
+        } catch TimeoutError.timedOut {
+            await progress.fileFailed()
+        } catch {
+            await progress.fileFailed()
+        }
+    }
+    
+    // Create and upload manifest
+    let manifest = SnapshotManifest(
+        timestamp: timestamp,
+        createdAt: Date(),
+        files: manifestFiles,
+        totalFiles: manifestFiles.count,
+        totalBytes: manifestFiles.reduce(0) { $0 + $1.size }
+    )
+    
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let manifestData = try encoder.encode(manifest)
+    
+    // Upload manifest
+    let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
+    let manifestTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("manifest_\(timestamp).json")
+    try manifestData.write(to: manifestTempURL)
+    
+    let manifestSha1 = try sha1HexStream(fileURL: manifestTempURL)
+    try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
+    try? FileManager.default.removeItem(at: manifestTempURL)
+    
+    await progress.printFinal()
+    print("  📸 Snapshot manifest uploaded: \(manifestPath)")
+}
+
+// MARK: - Mirror logic (simple upload all)
+
+func runMirror(config: AppConfig) async throws {
+    let progress = ProgressTracker()
+    
+    let excludeHidden = config.filters?.excludeHidden ?? true
+    let folders = buildFoldersToScan(from: config)
+    
+    // Scan
+    var allFiles: [FileItem] = []
+    for folder in folders {
+        allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
+    }
+    allFiles = applyFilters(allFiles, filters: config.filters)
+    
+    // Sort: Local first
+    let sortedFiles = allFiles.sorted {
+        if $0.status == $1.status {
+            return $0.url.lastPathComponent.lowercased() < $1.url.lastPathComponent.lowercased()
+        }
+        return $0.status == "Local"
+    }
+    
+    // Prepare B2 client
+    let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+    let overallUploadTimeout = TimeInterval(config.timeouts?.overallUploadSeconds ?? 7200)
+    let icloudTimeout = config.timeouts?.icloudDownloadSeconds ?? 1800
+    let maxRetries = config.b2.maxRetries ?? 3
+    let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+    
+    // Decide part size
+    let recommendedPartSize = (try? await client.recommendedPartSizeBytes()) ?? (100 * 1024 * 1024)
+    let configuredPartSizeMB = config.b2.partSizeMB
+    let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
+    let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
+    
+    let remotePrefix = config.mirror?.remotePrefix ?? config.b2.remotePrefix ?? "mirror"
+    
+    // Initialize progress tracker
+    let totalBytes = sortedFiles.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+    await progress.initialize(totalFiles: sortedFiles.count, totalBytes: totalBytes)
+    
+    print("\n\(boldColor)Starting mirror\(resetColor)")
+    print("  📂 Files: \(sortedFiles.count)")
+    print("  📦 Total size: \(formatBytes(totalBytes))")
+    print("")
+    
+    // Upload loop
+    for file in sortedFiles {
+        await progress.printProgress()
+        
+        do {
+            let url = file.url
+            let status = file.status
+            
+            if status == "Cloud" {
+                await progress.startFile(name: "☁️  \(url.lastPathComponent)")
+                await progress.printProgress()
+                
+                startDownloadIfNeeded(url: url)
+                let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
+                    await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
+                }
+                if !ok {
+                    await progress.fileFailed()
+                    continue
+                }
+            } else if status == "Error" {
+                await progress.fileFailed()
+                continue
+            }
+            
+            let remoteName = remoteFileName(for: url, remotePrefix: remotePrefix)
+            let contentType = guessContentType(for: url)
+            
+            let size = file.size ?? (fileSize(url: url) ?? 0)
+            let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
+            
+            await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
+            await progress.printProgress()
+            
+            if size <= smallFileThreshold {
+                let sha1 = try sha1HexStream(fileURL: url)
+                try await withTimeoutVoid(overallUploadTimeout) {
+                    try await client.uploadSmallFile(fileURL: url, fileName: remoteName, contentType: contentType, sha1Hex: sha1)
+                }
+            } else {
+                try await withTimeoutVoid(overallUploadTimeout) {
+                    try await client.uploadLargeFile(fileURL: url, fileName: remoteName, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
+                }
+            }
+            
+            await progress.fileCompleted(bytes: size)
+            
+            if status == "Cloud" {
+                evictIfUbiquitous(url: url)
+            }
+        } catch TimeoutError.timedOut {
+            await progress.fileFailed()
+        } catch {
+            await progress.fileFailed()
+        }
+    }
+    
+    await progress.printFinal()
+}
+
 @main
 struct Runner {
     static func main() async {
@@ -1155,128 +1904,49 @@ struct Runner {
             return
             
         case "backup":
-            // Continue to backup logic below
-            break
+            do {
+                let configURL = readConfigURL(from: args)
+                let config = try loadConfig(from: configURL)
+                try await runIncrementalBackup(config: config)
+            } catch {
+                print("\u{001B}[?25h", terminator: "")
+                fflush(stdout)
+                print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
+                exit(1)
+            }
+            return
+            
+        case "mirror":
+            do {
+                let configURL = readConfigURL(from: args)
+                let config = try loadConfig(from: configURL)
+                try await runMirror(config: config)
+            } catch {
+                print("\u{001B}[?25h", terminator: "")
+                fflush(stdout)
+                print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
+                exit(1)
+            }
+            return
+            
+        case "cleanup":
+            do {
+                let configURL = readConfigURL(from: args)
+                let config = try loadConfig(from: configURL)
+                try await runCleanup(config: config)
+            } catch {
+                print("\u{001B}[?25h", terminator: "")
+                fflush(stdout)
+                print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
+                exit(1)
+            }
+            return
             
         default:
             print("\(errorColor)❌ Unknown command: '\(command)'\(resetColor)")
             print("Run 'kodema help' for usage information.\n")
             exit(1)
         }
-        
-        // Backup logic starts here
-        let progress = ProgressTracker()
-        
-        do {
-            // Load config
-            let configURL = readConfigURL(from: args)
-            let config = try loadConfig(from: configURL)
-
-            let excludeHidden = config.filters?.excludeHidden ?? true
-            let folders = buildFoldersToScan(from: config)
-
-            // Scan
-            var allFiles: [FileItem] = []
-            for folder in folders {
-                allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
-            }
-            allFiles = applyFilters(allFiles, filters: config.filters)
-
-            // Sort: Local first, then Cloud
-            let sortedFiles = allFiles.sorted {
-                if $0.status == $1.status {
-                    return $0.url.lastPathComponent.lowercased() < $1.url.lastPathComponent.lowercased()
-                }
-                return $0.status == "Local"
-            }
-
-            // Prepare B2 client
-            let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
-            let overallUploadTimeout = TimeInterval(config.timeouts?.overallUploadSeconds ?? 7200)
-            let icloudTimeout = config.timeouts?.icloudDownloadSeconds ?? 1800
-            let maxRetries = config.b2.maxRetries ?? 3
-            let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
-
-            // Decide part size
-            let recommendedPartSize = (try? await client.recommendedPartSizeBytes()) ?? (100 * 1024 * 1024)
-            let configuredPartSizeMB = config.b2.partSizeMB
-            let partSizeBytes = max((configuredPartSizeMB ?? (recommendedPartSize / (1024*1024))), (try? await client.absoluteMinimumPartSizeBytes()) ?? (5 * 1024 * 1024)) * 1024 * 1024
-            let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
-
-            // Initialize progress tracker
-            let totalBytes = sortedFiles.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
-            await progress.initialize(totalFiles: sortedFiles.count, totalBytes: totalBytes)
-            
-            print("\n\(boldColor)Starting upload\(resetColor)")
-            print("  📂 Files: \(sortedFiles.count)")
-            print("  📦 Total size: \(formatBytes(totalBytes))")
-            print("")
-
-            // Upload loop
-            for file in sortedFiles {
-                // Show initial progress before starting
-                await progress.printProgress()
-                
-                do {
-                    let url = file.url
-                    let status = file.status
-
-                    if status == "Cloud" {
-                        await progress.startFile(name: "☁️  \(url.lastPathComponent)")
-                        await progress.printProgress()
-                        
-                        startDownloadIfNeeded(url: url)
-                        let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
-                            await waitForICloudDownload(url: url, timeoutSeconds: icloudTimeout)
-                        }
-                        if !ok {
-                            await progress.fileFailed()
-                            continue
-                        }
-                    } else if status == "Error" {
-                        await progress.fileFailed()
-                        continue
-                    }
-
-                    let remoteName = remoteFileName(for: url, remotePrefix: config.b2.remotePrefix)
-                    let contentType = guessContentType(for: url)
-
-                    let size = file.size ?? (fileSize(url: url) ?? 0)
-                    let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
-
-                    await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
-                    await progress.printProgress()
-
-                    if size <= smallFileThreshold {
-                        let sha1 = try sha1HexStream(fileURL: url)
-                        try await withTimeoutVoid(overallUploadTimeout) {
-                            try await client.uploadSmallFile(fileURL: url, fileName: remoteName, contentType: contentType, sha1Hex: sha1)
-                        }
-                    } else {
-                        try await withTimeoutVoid(overallUploadTimeout) {
-                            try await client.uploadLargeFile(fileURL: url, fileName: remoteName, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
-                        }
-                    }
-                    
-                    await progress.fileCompleted(bytes: size)
-
-                    if status == "Cloud" {
-                        evictIfUbiquitous(url: url)
-                    }
-                } catch TimeoutError.timedOut {
-                    await progress.fileFailed()
-                } catch {
-                    await progress.fileFailed()
-                }
-            }
-            
-            await progress.printFinal()
-        } catch {
-            // Show cursor on error
-            print("\u{001B}[?25h", terminator: "")
-            fflush(stdout)
-            print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
-            exit(1)
-        }
     }
 }
+
