@@ -1801,6 +1801,11 @@ func runIncrementalBackup(config: AppConfig) async throws {
     // Upload files & build manifest
     var manifestFiles: [FileVersionInfo] = []
 
+    // Start with files from previous snapshot
+    if let prevManifest = latestManifest {
+        manifestFiles = prevManifest.files
+    }
+
     for (file, relativePath) in filesToBackup {
         await progress.printProgress()
 
@@ -1850,13 +1855,22 @@ func runIncrementalBackup(config: AppConfig) async throws {
 
             await progress.fileCompleted(bytes: size)
 
-            // Add to manifest
-            manifestFiles.append(FileVersionInfo(
-                path: relativePath,
-                size: size,
-                modificationDate: mtime,
-                versionTimestamp: timestamp
-            ))
+            // Update manifest: replace old version or add new
+            if let existingIndex = manifestFiles.firstIndex(where: { $0.path == relativePath }) {
+                manifestFiles[existingIndex] = FileVersionInfo(
+                    path: relativePath,
+                    size: size,
+                    modificationDate: mtime,
+                    versionTimestamp: timestamp
+                )
+            } else {
+                manifestFiles.append(FileVersionInfo(
+                    path: relativePath,
+                    size: size,
+                    modificationDate: mtime,
+                    versionTimestamp: timestamp
+                ))
+            }
 
             if status == "Cloud" {
                 evictIfUbiquitous(url: url)
@@ -1867,6 +1881,10 @@ func runIncrementalBackup(config: AppConfig) async throws {
             await progress.fileFailed()
         }
     }
+
+    // Remove deleted files from manifest (files that were in previous snapshot but no longer exist)
+    let currentPaths = Set(allFiles.map { buildRelativePath(for: $0.url, from: folders) })
+    manifestFiles = manifestFiles.filter { currentPaths.contains($0.path) }
 
     // Create and upload manifest
     let manifest = SnapshotManifest(
