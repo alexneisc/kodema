@@ -142,6 +142,37 @@ kodema backup
 4. Find and delete orphaned file versions (not referenced by any kept snapshot)
 - Supports custom config via `--config` or `-c` flag
 
+**`kodema restore [options]` (lines 1995-2354)**
+1. Parse restore options (snapshot, paths, output, force, list-snapshots)
+2. If `--list-snapshots`: display all available snapshots and exit
+3. Get target snapshot (interactive selection or via `--snapshot` flag)
+4. Filter files to restore (all or specific paths via `--path`)
+5. Determine output directory (original location or `--output`)
+6. Check for file conflicts with existing files
+7. If conflicts and no `--force`: prompt user for confirmation
+8. Download files from B2 with progress tracking
+9. Write files and restore modification timestamps
+10. Report completion with success/failure counts
+
+**Flags:**
+- `--snapshot <timestamp>` - Restore specific snapshot
+- `--path <path>` - Restore specific file/folder (repeatable)
+- `--output <path>` - Custom restore location (default: original)
+- `--force` - Skip overwrite confirmation
+- `--list-snapshots` - List available snapshots
+
+**Key functions:**
+- `parseRestoreOptions()` - Parse command-line flags
+- `fetchAllSnapshots()` - List snapshots from B2
+- `selectSnapshotInteractively()` - Interactive snapshot selection with metadata
+- `getTargetSnapshot()` - Get snapshot manifest (interactive or direct)
+- `filterFilesToRestore()` - Filter files by path patterns
+- `checkForConflicts()` - Detect existing files at destination
+- `handleConflicts()` - Interactive conflict resolution
+- `downloadAndRestoreFiles()` - Download loop with progress tracking
+- `runRestore()` - Main restore entry point
+- `listSnapshotsCommand()` - Display available snapshots
+
 ### Key Design Decisions
 
 **Streaming for Large Files**
@@ -242,3 +273,9 @@ Package definition: `Package.swift` (in repository root)
 5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
 
 6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1944)
+
+7. **Restore Memory Usage**: Downloads load entire file into RAM - acceptable for most files (<1GB) but may cause issues with very large files
+
+8. **Restore Conflicts**: Without `--force`, user must manually confirm overwrites - be careful when restoring to original location
+
+9. **Sequential Downloads**: Restore downloads files one at a time - no parallelization (avoids B2 rate limits but slower for many small files)

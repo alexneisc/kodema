@@ -23,6 +23,13 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 - Time Machine-style retention policy
 - Automatic cleanup of old versions
 
+💾 **Restore Capabilities:**
+- Interactive snapshot selection with metadata
+- Restore entire snapshots or specific files/folders
+- Custom restore location support
+- Conflict detection with overwrite confirmation
+- Preserves original modification timestamps
+
 🎨 **User Friendly:**
 - Discover iCloud folders with `kodema list`
 - Rich terminal UI with colors and progress bars
@@ -92,6 +99,7 @@ kodema mirror
 | `kodema backup` | Incremental backup with snapshots |
 | `kodema mirror` | Simple mirror (upload all files) |
 | `kodema cleanup` | Clean up old versions per retention policy |
+| `kodema restore` | Restore files from backup snapshots |
 | `kodema list` | Discover iCloud folders |
 | `kodema help` | Show help message |
 

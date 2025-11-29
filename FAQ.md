@@ -76,19 +76,26 @@ kodema mirror
 
 ### How do I restore files?
 
-Currently manual via B2 CLI:
+Use the `kodema restore` command:
 
 ```bash
-# List snapshots
-b2 ls my-backup-bucket backup/snapshots/
+# Interactive selection - shows list of snapshots
+kodema restore
 
-# Download specific version
-b2 download-file-by-name my-backup-bucket \
-  backup/files/Documents/myfile.txt/2024-11-27_143022 \
-  restored-file.txt
+# Restore specific snapshot
+kodema restore --snapshot 2024-11-27_143022
+
+# Restore specific file
+kodema restore --path Documents/myfile.txt
+
+# Restore to custom location
+kodema restore --output ~/restored-files/
+
+# List available snapshots
+kodema restore --list-snapshots
 ```
 
-**Note**: `kodema restore` command is planned! See [TODO.md](TODO.md)
+See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for more examples.
 
 ### How do I schedule automatic backups?
 
@@ -224,6 +231,72 @@ b2:
 ### Does it work offline?
 
 No - Kodema needs internet to upload to B2.
+
+## Restore Questions
+
+### How do I see which snapshots are available?
+
+```bash
+kodema restore --list-snapshots
+```
+
+This shows all snapshots with dates, file counts, and sizes.
+
+### Can I restore just one file?
+
+Yes! Use the `--path` flag:
+
+```bash
+kodema restore --path Documents/myfile.txt
+```
+
+You can also restore entire folders:
+```bash
+kodema restore --path Documents/Photos/
+```
+
+### Will restore overwrite my current files?
+
+By default, Kodema asks for confirmation before overwriting. You'll see:
+- List of files that will be overwritten
+- Options to proceed or cancel
+
+Use `--force` to skip confirmation:
+```bash
+kodema restore --snapshot 2024-11-27_143022 --force
+```
+
+### Can I restore to a different location?
+
+Yes! Use `--output`:
+
+```bash
+kodema restore --output ~/restored-files/
+```
+
+This preserves the original directory structure within the output folder.
+
+### How do I restore to a specific date?
+
+First, list available snapshots:
+```bash
+kodema restore --list-snapshots
+```
+
+Then restore that snapshot:
+```bash
+kodema restore --snapshot 2024-11-27_143022
+```
+
+### What if restore fails partway through?
+
+Kodema continues on errors and shows failed count at the end. Just run the restore again - it will:
+- Detect already-restored files (if using `--force`)
+- Or prompt you to overwrite (without `--force`)
+
+### Does restore preserve file timestamps?
+
+Yes! Kodema restores the original modification dates from when files were backed up.
 
 ## Troubleshooting
 

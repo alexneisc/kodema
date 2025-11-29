@@ -91,6 +91,61 @@ kodema cleanup --config ~/my-config.yml
 
 ---
 
+### `kodema restore` - Restore Files from Backup
+
+Restores files from backup snapshots with flexible options for snapshot selection, file filtering, and destination.
+
+**Features:**
+- 📂 **Interactive selection** - Browse available snapshots with metadata
+- 🎯 **Targeted restore** - Restore specific files or folders
+- 📍 **Custom location** - Restore to any directory
+- ⚠️ **Conflict detection** - Warns before overwriting existing files
+
+**Usage:**
+```bash
+# Interactive snapshot selection (shows list with metadata)
+kodema restore
+
+# Restore specific snapshot
+kodema restore --snapshot 2024-11-27_143022
+
+# Restore specific file from latest snapshot
+kodema restore --path Documents/myfile.txt
+
+# Restore specific folder
+kodema restore --path Documents/Photos/ --snapshot 2024-11-27_143022
+
+# Restore to custom location
+kodema restore --output ~/restored-files/
+
+# List available snapshots
+kodema restore --list-snapshots
+
+# Force overwrite without confirmation
+kodema restore --snapshot 2024-11-27_143022 --force
+
+# Combined: restore specific files to custom location
+kodema restore --snapshot 2024-11-27_143022 \
+  --path Documents/important.txt \
+  --path Documents/Photos/ \
+  --output ~/recovered/
+```
+
+**How it works:**
+1. Select snapshot (interactive or via `--snapshot`)
+2. Filter files to restore (all or via `--path`)
+3. Check for conflicts with existing files
+4. Confirm overwrites (unless `--force`)
+5. Download and restore with progress tracking
+6. Restore original modification timestamps
+
+**Conflict handling:**
+- Shows list of files that will be overwritten
+- Options: overwrite all or cancel
+- Use `--force` to skip confirmation
+
+---
+
 ### `kodema list` - Discover iCloud Folders
 
 Lists all iCloud Drive folders and their contents to help you configure which folders to backup.
