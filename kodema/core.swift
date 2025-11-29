@@ -2240,10 +2240,34 @@ func filterFilesToRestore(manifest: SnapshotManifest, pathFilters: [String]) -> 
 
     return manifest.files.filter { file in
         for filter in pathFilters {
-            if file.path == filter {
+            let normalizedFilter = filter.hasSuffix("/") ? String(filter.dropLast()) : filter
+            let filePath = file.path
+
+            if filePath == normalizedFilter {
                 return true
             }
-            if file.path.hasPrefix(filter + "/") || filter.hasPrefix(file.path + "/") {
+
+            if filePath.hasPrefix(normalizedFilter + "/") {
+                return true
+            }
+
+            let fileComponents = filePath.split(separator: "/").map(String.init)
+            let filterComponents = normalizedFilter.split(separator: "/").map(String.init)
+
+            if filterComponents.count <= fileComponents.count {
+                var matches = true
+                for (index, filterComponent) in filterComponents.enumerated() {
+                    if fileComponents[index] != filterComponent {
+                        matches = false
+                        break
+                    }
+                }
+                if matches {
+                    return true
+                }
+            }
+
+            if filePath.contains("/" + normalizedFilter + "/") {
                 return true
             }
         }
