@@ -54,3 +54,7 @@ kodema
 !kodema/
 # Release artifacts (temporary)
 RELEASE_NOTES_*.md
+
+# Zed
+.zed/state.json
+.zed/tasks_history.json
