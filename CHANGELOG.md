@@ -65,6 +65,36 @@ kodema restore --path folder1 --list-snapshots # Filter snapshots
 - Added restore troubleshooting section to FAQ
 - Documented snapshot manifest behavior and path filtering logic
 
+## [0.3.0] - 2025-11-28
+
+### Added
+
+#### New Command: `kodema version`
+- Display version information: `kodema version`, `kodema -v`, `kodema --version`
+- Version displayed in help message header
+- Help command aliases: `-h`, `--help`
+
+#### B2 Client Enhancements
+- New `downloadFile()` method for retrieving files from B2
+- New `fetchLatestManifest()` to download and parse snapshot manifests
+
+### Fixed
+
+#### Critical: Incremental Backup Change Detection
+- **Fixed incremental backup detecting unchanged files as modified**
+- Previous behavior: All files were re-uploaded on every backup run
+- Root cause: Missing manifest-based comparison logic
+- New behavior: Correctly compares files against previous snapshot manifest
+- Impact: Significantly reduces backup time and bandwidth usage after first backup
+
+#### Implementation
+- Rewrote `fileNeedsBackup()` to use manifest-based comparison
+- Compare file size and modification time against previous snapshot
+- Only upload files that are new or have changed
+
+### Documentation
+- Updated CLAUDE.md with new command references and updated line numbers
+
 ## [0.2] - 2025-11-27
 
 ### Added - Major Feature Release: Incremental Backup with Versioning
