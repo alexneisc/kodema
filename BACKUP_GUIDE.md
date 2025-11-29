@@ -121,6 +121,9 @@ kodema restore --output ~/restored-files/
 # List available snapshots
 kodema restore --list-snapshots
 
+# List snapshots containing specific path (shows only relevant snapshots)
+kodema restore --path folder1 --list-snapshots
+
 # Force overwrite without confirmation
 kodema restore --snapshot 2024-11-27_143022 --force
 
@@ -138,6 +141,13 @@ kodema restore --snapshot 2024-11-27_143022 \
 4. Confirm overwrites (unless `--force`)
 5. Download and restore with progress tracking
 6. Restore original modification timestamps
+
+**Path filtering:**
+- `--path folder1` matches files in folder1 at any level
+- Supports exact paths, prefixes, and directory components
+- Works with or without trailing slash: `folder1` = `folder1/`
+- Can specify multiple paths: `--path file1.txt --path folder2/`
+- `--list-snapshots` with `--path` shows only snapshots containing those files
 
 **Conflict handling:**
 - Shows list of files that will be overwritten

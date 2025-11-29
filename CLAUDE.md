@@ -83,9 +83,13 @@ kodema backup
 **Versioning & Snapshots (lines 70-86, 1066-1149)**
 - `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
 - `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
+- **IMPORTANT**: Each snapshot manifest contains ALL files existing at that point in time, not just changed files
+  - New snapshots inherit files from previous snapshot
+  - Changed files get updated version timestamps
+  - Deleted files are removed from manifest
 - `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
 - Storage structure:
-  - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata
+  - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
   - `backup/files/{relative_path}/{timestamp}` - versioned file content
 - `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
 
@@ -166,12 +170,17 @@ kodema backup
 - `fetchAllSnapshots()` - List snapshots from B2
 - `selectSnapshotInteractively()` - Interactive snapshot selection with metadata
 - `getTargetSnapshot()` - Get snapshot manifest (interactive or direct)
-- `filterFilesToRestore()` - Filter files by path patterns
+- `filterFilesToRestore()` - Filter files by path patterns (supports exact match, prefix, directory components)
 - `checkForConflicts()` - Detect existing files at destination
 - `handleConflicts()` - Interactive conflict resolution
 - `downloadAndRestoreFiles()` - Download loop with progress tracking
 - `runRestore()` - Main restore entry point
-- `listSnapshotsCommand()` - Display available snapshots
+- `listSnapshotsCommand()` - Display available snapshots (with optional path filtering)
+
+**Path filtering logic:**
+- Supports flexible path matching: exact, prefix, directory components
+- Works with or without trailing slash
+- Can filter snapshots by path: `--path folder1 --list-snapshots` shows only snapshots containing folder1 files
 
 ### Key Design Decisions
 

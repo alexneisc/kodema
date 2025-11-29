@@ -237,10 +237,14 @@ No - Kodema needs internet to upload to B2.
 ### How do I see which snapshots are available?
 
 ```bash
+# List all snapshots
 kodema restore --list-snapshots
+
+# List only snapshots containing specific files
+kodema restore --path folder1 --list-snapshots
 ```
 
-This shows all snapshots with dates, file counts, and sizes.
+This shows snapshots with dates, file counts, and sizes. When using `--path`, only snapshots containing those files are shown.
 
 ### Can I restore just one file?
 
@@ -253,7 +257,13 @@ kodema restore --path Documents/myfile.txt
 You can also restore entire folders:
 ```bash
 kodema restore --path Documents/Photos/
+kodema restore --path folder1  # Works with or without trailing slash
 ```
+
+Path filtering is flexible and matches:
+- Exact file/folder names: `folder1` matches `folder1/file.txt`
+- Directory components: `folder1` matches `Documents/folder1/file.txt`
+- Multiple paths: `--path file1.txt --path folder2/`
 
 ### Will restore overwrite my current files?
 
