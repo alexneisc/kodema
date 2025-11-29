@@ -2,6 +2,69 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.4.0] - 2025-11-30
+
+### Added - Restore Functionality
+
+#### New Command: `kodema restore`
+- **Full restore capabilities** - Recover files from backup snapshots
+- **Interactive snapshot selection** - Browse snapshots with metadata (date, file count, size, age)
+- **Flexible file filtering** - Restore entire snapshots or specific files/folders via `--path`
+- **Custom restore location** - Use `--output` to restore to any directory (default: original location)
+- **Conflict detection** - Warns before overwriting existing files with confirmation prompt
+- **Force mode** - Skip confirmation with `--force` flag
+- **Snapshot listing** - `--list-snapshots` shows available snapshots
+- **Path-filtered listing** - Combine `--path` with `--list-snapshots` to show only relevant snapshots
+
+#### Restore Features
+- 📂 **Smart path matching** - Flexible filtering supports exact paths, prefixes, and directory components
+- 💾 **Metadata preservation** - Restores original file modification timestamps
+- 📊 **Progress tracking** - Download progress with speed, ETA, and file-by-file status
+- ⚠️ **Error resilience** - Continues on individual file failures, shows summary at end
+- 🔍 **Multiple paths** - Can specify multiple `--path` flags to restore specific files/folders
+
+#### Examples
+```bash
+kodema restore                                 # Interactive selection
+kodema restore --snapshot 2024-11-27_143022    # Specific snapshot
+kodema restore --path folder1                  # Specific folder from latest
+kodema restore --path file.txt --output ~/recovered/
+kodema restore --list-snapshots                # List all snapshots
+kodema restore --path folder1 --list-snapshots # Filter snapshots
+```
+
+### Fixed
+
+#### Critical: Snapshot Manifest Completeness
+- **Fixed incremental backup manifests** - Now include ALL existing files, not just changed ones
+- Previous behavior: Each snapshot only tracked newly uploaded files
+- New behavior: Snapshots inherit files from previous snapshot, update changed files, remove deleted files
+- This ensures restore can recover complete filesystem state from any snapshot
+
+#### Restore Path Filtering
+- **Improved path matching** - Now correctly matches files at any directory level
+- Supports exact match, prefix match, and directory component matching
+- Works with or without trailing slashes: `folder1` = `folder1/`
+- Example: `--path folder1` now matches `Documents/folder1/file.txt`
+
+#### Snapshot Listing with Filters
+- **`--list-snapshots` respects `--path` filter** - Only shows snapshots containing specified files
+- Displays correct file counts for filtered paths
+- Shows appropriate message when no matching snapshots found
+
+### Changed
+
+#### Configuration
+- **`--config` flag replaces positional argument** - More explicit and standard CLI pattern
+- Old: `kodema backup ~/my-config.yml`
+- New: `kodema backup --config ~/my-config.yml` or `kodema backup -c ~/my-config.yml`
+- Default config location unchanged: `~/.config/kodema/config.yml`
+
+### Documentation
+- Updated all docs (README, BACKUP_GUIDE, FAQ, CLAUDE.md) with restore examples
+- Added restore troubleshooting section to FAQ
+- Documented snapshot manifest behavior and path filtering logic
+
 ## [0.2] - 2025-11-27
 
 ### Added - Major Feature Release: Incremental Backup with Versioning
