@@ -33,6 +33,9 @@ xcode-select --install
 
 # 2. Build Kodema
 cd kodema && make release
+
+# 3. Install to /usr/local/bin
+make install
 ```
 
 ### Where do I get B2 credentials?
