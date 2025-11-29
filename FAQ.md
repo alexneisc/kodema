@@ -51,7 +51,7 @@ Default location: `~/.config/kodema/config.yml`
 
 Or specify custom path:
 ```bash
-kodema backup ~/my-config.yml
+kodema backup --config ~/my-config.yml
 ```
 
 ### Do I need iCloud Drive?
@@ -174,10 +174,10 @@ include:
 
 ### Can I use multiple configs?
 
-Yes! Specify path as second argument:
+Yes! Specify path with --config flag:
 ```bash
-kodema backup ~/configs/work.yml
-kodema backup ~/configs/personal.yml
+kodema backup --config ~/configs/work.yml
+kodema backup --config ~/configs/personal.yml
 ```
 
 ## Technical Questions
@@ -305,7 +305,7 @@ Kodema streams large files, but if you hit memory limits:
 
 Not recommended - could cause conflicts. Use sequential runs:
 ```bash
-kodema backup work.yml && kodema backup personal.yml
+kodema backup --config work.yml && kodema backup --config personal.yml
 ```
 
 ### Can I backup to multiple clouds?

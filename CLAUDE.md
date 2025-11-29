@@ -118,7 +118,7 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema backup` (lines 1670-1832)**
+**`kodema backup [--config <path>]` (lines 1670-1832)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
@@ -126,18 +126,21 @@ kodema backup
 5. Upload changed files with progress tracking
 6. Create and upload snapshot manifest
 7. Evict iCloud files to free disk space
+- Supports custom config via `--config` or `-c` flag
 
-**`kodema mirror` (lines 1836-1939)**
+**`kodema mirror [--config <path>]` (lines 1836-1939)**
 1. Scan all files
 2. Sort files (local first)
 3. Upload all files (no change detection)
 4. Simple flat structure in B2
+- Supports custom config via `--config` or `-c` flag
 
-**`kodema cleanup` (lines 1515-1666)**
+**`kodema cleanup [--config <path>]` (lines 1515-1666)**
 1. Fetch all snapshot manifests from B2
 2. Apply retention policy to select snapshots to keep
 3. Delete old snapshot manifests
 4. Find and delete orphaned file versions (not referenced by any kept snapshot)
+- Supports custom config via `--config` or `-c` flag
 
 ### Key Design Decisions
 

@@ -252,16 +252,19 @@ extension URL {
 }
 
 func readConfigURL(from arguments: [String]) -> URL {
-    // arguments[0] is program name, arguments[1] is command, arguments[2] might be config path
-    if arguments.count > 2 {
-        return URL(fileURLWithPath: arguments[2]).expandedTilde()
-    } else {
-        let defaultPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config")
-            .appendingPathComponent("kodema")
-            .appendingPathComponent("config.yml")
-        return defaultPath
+    // Look for --config or -c flag
+    for i in 0..<arguments.count {
+        if (arguments[i] == "--config" || arguments[i] == "-c") && i + 1 < arguments.count {
+            return URL(fileURLWithPath: arguments[i + 1]).expandedTilde()
+        }
     }
+
+    // Default config path
+    let defaultPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config")
+        .appendingPathComponent("kodema")
+        .appendingPathComponent("config.yml")
+    return defaultPath
 }
 
 func loadConfig(from url: URL) throws -> AppConfig {
@@ -1204,17 +1207,19 @@ func printHelp() {
     print("\nUsage:")
     print("  kodema <command> [options]")
     print("\nCommands:")
-    print("  \(boldColor)backup\(resetColor) [config_path]    Incremental backup with snapshots and versioning")
-    print("  \(boldColor)mirror\(resetColor) [config_path]    Simple mirroring (uploads all files)")
-    print("  \(boldColor)cleanup\(resetColor) [config_path]   Clean up old backup versions per retention policy")
-    print("  \(boldColor)list\(resetColor)                   List all folders in iCloud Drive")
-    print("  \(boldColor)version\(resetColor)                Show version information")
-    print("  \(boldColor)help\(resetColor)                   Show this help message")
+    print("  \(boldColor)backup\(resetColor)     Incremental backup with snapshots and versioning")
+    print("  \(boldColor)mirror\(resetColor)     Simple mirroring (uploads all files)")
+    print("  \(boldColor)cleanup\(resetColor)    Clean up old backup versions per retention policy")
+    print("  \(boldColor)list\(resetColor)       List all folders in iCloud Drive")
+    print("  \(boldColor)version\(resetColor)    Show version information")
+    print("  \(boldColor)help\(resetColor)       Show this help message")
+    print("\nOptions:")
+    print("  \(boldColor)--config\(resetColor), \(boldColor)-c\(resetColor) <path>   Specify custom config file path")
     print("\nExamples:")
-    print("  kodema backup                 Incremental backup with default config")
-    print("  kodema mirror ~/my-config.yml Simple mirror with custom config")
-    print("  kodema cleanup                Clean up old versions")
-    print("  kodema list                   Discover iCloud folders")
+    print("  kodema backup                        Incremental backup with default config")
+    print("  kodema mirror --config ~/my-config.yml   Simple mirror with custom config")
+    print("  kodema cleanup -c ~/my-config.yml    Clean up with custom config")
+    print("  kodema list                          Discover iCloud folders")
     print("\n\(boldColor)Backup vs Mirror:\(resetColor)")
     print("  • \(boldColor)backup\(resetColor) - Creates versioned snapshots, only uploads changed files")
     print("  • \(boldColor)mirror\(resetColor) - Uploads all files every time, no versioning")
@@ -2007,4 +2012,3 @@ struct Runner {
         }
     }
 }
-

@@ -266,7 +266,7 @@ ls -la ~/.config/kodema/config.yml
 
 Or specify custom location:
 ```bash
-kodema backup ~/my-custom-config.yml
+kodema backup --config ~/my-custom-config.yml
 ```
 
 ## Getting Help

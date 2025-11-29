@@ -43,7 +43,7 @@ backup/
 kodema backup
 
 # Use custom config
-kodema backup ~/my-config.yml
+kodema backup --config ~/my-config.yml
 ```
 
 ---
@@ -71,7 +71,7 @@ mirror/
 kodema mirror
 
 # Use custom config
-kodema mirror ~/my-config.yml
+kodema mirror --config ~/my-config.yml
 ```
 
 ---
@@ -86,7 +86,7 @@ Removes old backup versions according to your retention policy (Time Machine-sty
 kodema cleanup
 
 # Use custom config
-kodema cleanup ~/my-config.yml
+kodema cleanup --config ~/my-config.yml
 ```
 
 ---
