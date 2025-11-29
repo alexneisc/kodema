@@ -2170,34 +2170,63 @@ func getTargetSnapshot(client: B2Client, remotePrefix: String, options: RestoreO
     }
 }
 
-func listSnapshotsCommand(config: AppConfig) async throws {
+func listSnapshotsCommand(config: AppConfig, options: RestoreOptions) async throws {
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
 
-    let snapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
+    let allSnapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
 
-    guard !snapshots.isEmpty else {
+    guard !allSnapshots.isEmpty else {
         print("\n\(dimColor)No snapshots found\(resetColor)\n")
         return
     }
 
-    print("\n\(boldColor)Available Snapshots:\(resetColor)")
-    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
-
-    for snapshot in snapshots {
+    var snapshots: [(SnapshotInfo, SnapshotManifest)] = []
+    for snapshot in allSnapshots {
         let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
 
+        if !options.paths.isEmpty {
+            let filteredFiles = filterFilesToRestore(manifest: manifest, pathFilters: options.paths)
+            if filteredFiles.isEmpty {
+                continue
+            }
+            snapshots.append((snapshot, manifest))
+        } else {
+            snapshots.append((snapshot, manifest))
+        }
+    }
+
+    guard !snapshots.isEmpty else {
+        if !options.paths.isEmpty {
+            print("\n\(dimColor)No snapshots found containing files matching: \(options.paths.joined(separator: ", "))\(resetColor)\n")
+        } else {
+            print("\n\(dimColor)No snapshots found\(resetColor)\n")
+        }
+        return
+    }
+
+    if !options.paths.isEmpty {
+        print("\n\(boldColor)Snapshots containing '\(options.paths.joined(separator: ", "))':\(resetColor)")
+    } else {
+        print("\n\(boldColor)Available Snapshots:\(resetColor)")
+    }
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+
+    for (snapshot, manifest) in snapshots {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
         let dateStr = formatter.string(from: snapshot.date)
 
+        let displayFiles = !options.paths.isEmpty ? filterFilesToRestore(manifest: manifest, pathFilters: options.paths).count : manifest.totalFiles
+        let displayBytes = !options.paths.isEmpty ? filterFilesToRestore(manifest: manifest, pathFilters: options.paths).reduce(Int64(0)) { $0 + $1.size } : manifest.totalBytes
+
         print("  \(boldColor)\(snapshot.timestamp)\(resetColor)  (\(dateStr))")
-        print("     Files: \(manifest.totalFiles)  |  Size: \(formatBytes(manifest.totalBytes))  |  \(formatRelativeTime(snapshot.date))")
+        print("     Files: \(displayFiles)  |  Size: \(formatBytes(displayBytes))  |  \(formatRelativeTime(snapshot.date))")
         print("")
     }
 
@@ -2422,7 +2451,7 @@ struct Runner {
                 let options = try parseRestoreOptions(from: args)
 
                 if options.listSnapshots {
-                    try await listSnapshotsCommand(config: config)
+                    try await listSnapshotsCommand(config: config, options: options)
                     return
                 }
 
