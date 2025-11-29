@@ -84,6 +84,25 @@ struct SnapshotManifest: Codable {
     let totalBytes: Int64
 }
 
+// MARK: - Restore Models
+
+struct RestoreOptions {
+    var snapshotTimestamp: String?
+    var paths: [String]               // File/folder filters
+    var outputDirectory: URL?
+    var force: Bool
+    var listSnapshots: Bool
+}
+
+struct FileConflict {
+    let relativePath: String
+    let existingURL: URL
+    let existingSize: Int64?
+    let existingMtime: Date?
+    let restoreSize: Int64
+    let restoreMtime: Date
+}
+
 // MARK: - Constants / ANSI colors
 
 let localColor = "\u{001B}[32m"
@@ -620,6 +639,36 @@ func mapHTTPErrorToB2(_ error: Error) -> B2Error {
         }
     }
     return .underlying(error)
+}
+
+// MARK: - Restore Errors
+
+enum RestoreError: Error, CustomStringConvertible {
+    case noSnapshotsFound
+    case invalidSnapshot(String)
+    case invalidSelection
+    case pathNotFound(String)
+    case cancelled
+    case downloadFailed(String, Error)
+    case writeFailed(String, Error)
+    case destinationNotWritable(String)
+    case insufficientDiskSpace(Int64)
+    case integrityCheckFailed(String)
+
+    var description: String {
+        switch self {
+        case .noSnapshotsFound: return "No snapshots found in backup"
+        case .invalidSnapshot(let ts): return "Invalid snapshot: \(ts)"
+        case .invalidSelection: return "Invalid selection"
+        case .pathNotFound(let p): return "Path not found in snapshot: \(p)"
+        case .cancelled: return "Restore cancelled by user"
+        case .downloadFailed(let f, let e): return "Failed to download \(f): \(e)"
+        case .writeFailed(let f, let e): return "Failed to write \(f): \(e)"
+        case .destinationNotWritable(let p): return "Destination not writable: \(p)"
+        case .insufficientDiskSpace(let needed): return "Insufficient disk space (need \(formatBytes(needed)))"
+        case .integrityCheckFailed(let f): return "Integrity check failed: \(f)"
+        }
+    }
 }
 
 // MARK: - B2 API Models
@@ -1210,16 +1259,26 @@ func printHelp() {
     print("  \(boldColor)backup\(resetColor)     Incremental backup with snapshots and versioning")
     print("  \(boldColor)mirror\(resetColor)     Simple mirroring (uploads all files)")
     print("  \(boldColor)cleanup\(resetColor)    Clean up old backup versions per retention policy")
+    print("  \(boldColor)restore\(resetColor)    Restore files from backup snapshots")
     print("  \(boldColor)list\(resetColor)       List all folders in iCloud Drive")
     print("  \(boldColor)version\(resetColor)    Show version information")
     print("  \(boldColor)help\(resetColor)       Show this help message")
     print("\nOptions:")
-    print("  \(boldColor)--config\(resetColor), \(boldColor)-c\(resetColor) <path>   Specify custom config file path")
+    print("  \(boldColor)--config\(resetColor), \(boldColor)-c\(resetColor) <path>         Specify custom config file path")
+    print("  \(boldColor)--snapshot\(resetColor) <timestamp>   Restore specific snapshot (for restore)")
+    print("  \(boldColor)--path\(resetColor) <path>           Restore specific file/folder (for restore)")
+    print("  \(boldColor)--output\(resetColor) <path>         Custom restore location (for restore)")
+    print("  \(boldColor)--force\(resetColor)                  Skip overwrite confirmation (for restore)")
+    print("  \(boldColor)--list-snapshots\(resetColor)        List available snapshots (for restore)")
     print("\nExamples:")
-    print("  kodema backup                        Incremental backup with default config")
-    print("  kodema mirror --config ~/my-config.yml   Simple mirror with custom config")
-    print("  kodema cleanup -c ~/my-config.yml    Clean up with custom config")
-    print("  kodema list                          Discover iCloud folders")
+    print("  kodema backup                              Incremental backup with default config")
+    print("  kodema mirror --config ~/my-config.yml     Simple mirror with custom config")
+    print("  kodema cleanup -c ~/my-config.yml          Clean up with custom config")
+    print("  kodema restore                             Interactive snapshot selection and restore")
+    print("  kodema restore --snapshot 2024-11-27_143022    Restore specific snapshot")
+    print("  kodema restore --path Documents/file.txt   Restore specific file from latest")
+    print("  kodema restore --list-snapshots            List available snapshots")
+    print("  kodema list                                Discover iCloud folders")
     print("\n\(boldColor)Backup vs Mirror:\(resetColor)")
     print("  • \(boldColor)backup\(resetColor) - Creates versioned snapshots, only uploads changed files")
     print("  • \(boldColor)mirror\(resetColor) - Uploads all files every time, no versioning")
@@ -1943,6 +2002,357 @@ func runMirror(config: AppConfig) async throws {
     await progress.printFinal()
 }
 
+// MARK: - Restore command
+
+func parseRestoreOptions(from arguments: [String]) throws -> RestoreOptions {
+    var options = RestoreOptions(
+        snapshotTimestamp: nil,
+        paths: [],
+        outputDirectory: nil,
+        force: false,
+        listSnapshots: false
+    )
+
+    var i = 0
+    while i < arguments.count {
+        let arg = arguments[i]
+
+        switch arg {
+        case "--snapshot":
+            guard i + 1 < arguments.count else {
+                throw RestoreError.invalidSelection
+            }
+            options.snapshotTimestamp = arguments[i + 1]
+            i += 2
+
+        case "--path":
+            guard i + 1 < arguments.count else {
+                throw RestoreError.invalidSelection
+            }
+            options.paths.append(arguments[i + 1])
+            i += 2
+
+        case "--output":
+            guard i + 1 < arguments.count else {
+                throw RestoreError.invalidSelection
+            }
+            options.outputDirectory = URL(fileURLWithPath: arguments[i + 1]).expandedTilde()
+            i += 2
+
+        case "--force":
+            options.force = true
+            i += 1
+
+        case "--list-snapshots":
+            options.listSnapshots = true
+            i += 1
+
+        default:
+            i += 1
+        }
+    }
+
+    return options
+}
+
+func fetchAllSnapshots(client: B2Client, remotePrefix: String) async throws -> [SnapshotInfo] {
+    let snapshotFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
+
+    var snapshots: [SnapshotInfo] = []
+    for file in snapshotFiles {
+        guard file.fileName.hasSuffix("/manifest.json") else { continue }
+
+        let components = file.fileName.split(separator: "/")
+        guard components.count >= 3,
+              let timestampStr = components[components.count - 2] as Substring?,
+              let date = parseTimestamp(String(timestampStr)) else {
+            continue
+        }
+
+        snapshots.append(SnapshotInfo(
+            timestamp: String(timestampStr),
+            date: date,
+            manifestPath: file.fileName
+        ))
+    }
+
+    return snapshots.sorted { $0.date > $1.date }
+}
+
+func formatRelativeTime(_ date: Date) -> String {
+    let now = Date()
+    let interval = now.timeIntervalSince(date)
+    let hours = Int(interval / 3600)
+    let days = Int(interval / 86400)
+
+    if hours < 1 {
+        return "just now"
+    } else if hours < 24 {
+        return "\(hours) hour\(hours == 1 ? "" : "s") ago"
+    } else if days < 7 {
+        return "\(days) day\(days == 1 ? "" : "s") ago"
+    } else if days < 30 {
+        let weeks = days / 7
+        return "\(weeks) week\(weeks == 1 ? "" : "s") ago"
+    } else {
+        let months = days / 30
+        return "\(months) month\(months == 1 ? "" : "s") ago"
+    }
+}
+
+func selectSnapshotInteractively(snapshots: [SnapshotInfo], client: B2Client, remotePrefix: String) async throws -> SnapshotManifest {
+    guard !snapshots.isEmpty else {
+        throw RestoreError.noSnapshotsFound
+    }
+
+    print("\n\(boldColor)Available Snapshots:\(resetColor)")
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+
+    let displayCount = min(snapshots.count, 10)
+    for (index, snapshot) in snapshots.prefix(displayCount).enumerated() {
+        let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        let dateStr = formatter.string(from: snapshot.date)
+
+        print("  \(boldColor)\(index + 1).\(resetColor) \(snapshot.timestamp)  (\(dateStr))")
+        print("     Files: \(manifest.totalFiles)  |  Size: \(formatBytes(manifest.totalBytes))  |  \(formatRelativeTime(snapshot.date))")
+        print("")
+    }
+
+    if snapshots.count > displayCount {
+        print("     \(dimColor)... and \(snapshots.count - displayCount) more snapshots\(resetColor)\n")
+    }
+
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+    print("Select snapshot number (1-\(displayCount)), or 'latest': ", terminator: "")
+    fflush(stdout)
+
+    guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+        throw RestoreError.invalidSelection
+    }
+
+    let selectedSnapshot: SnapshotInfo
+    if input.lowercased() == "latest" {
+        selectedSnapshot = snapshots[0]
+    } else if let number = Int(input), number >= 1, number <= displayCount {
+        selectedSnapshot = snapshots[number - 1]
+    } else {
+        throw RestoreError.invalidSelection
+    }
+
+    print("\n\(localColor)✓\(resetColor) Selected snapshot: \(selectedSnapshot.timestamp)\n")
+
+    let manifestData = try await client.downloadFile(fileName: selectedSnapshot.manifestPath)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(SnapshotManifest.self, from: manifestData)
+}
+
+func getTargetSnapshot(client: B2Client, remotePrefix: String, options: RestoreOptions) async throws -> SnapshotManifest {
+    if let timestamp = options.snapshotTimestamp {
+        let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
+        do {
+            let data = try await client.downloadFile(fileName: manifestPath)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(SnapshotManifest.self, from: data)
+        } catch {
+            throw RestoreError.invalidSnapshot(timestamp)
+        }
+    } else {
+        let snapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
+        return try await selectSnapshotInteractively(snapshots: snapshots, client: client, remotePrefix: remotePrefix)
+    }
+}
+
+func listSnapshotsCommand(config: AppConfig) async throws {
+    let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+    let maxRetries = config.b2.maxRetries ?? 3
+    let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+    let remotePrefix = config.backup?.remotePrefix ?? "backup"
+
+    let snapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
+
+    guard !snapshots.isEmpty else {
+        print("\n\(dimColor)No snapshots found\(resetColor)\n")
+        return
+    }
+
+    print("\n\(boldColor)Available Snapshots:\(resetColor)")
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+
+    for snapshot in snapshots {
+        let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        let dateStr = formatter.string(from: snapshot.date)
+
+        print("  \(boldColor)\(snapshot.timestamp)\(resetColor)  (\(dateStr))")
+        print("     Files: \(manifest.totalFiles)  |  Size: \(formatBytes(manifest.totalBytes))  |  \(formatRelativeTime(snapshot.date))")
+        print("")
+    }
+
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+}
+
+func filterFilesToRestore(manifest: SnapshotManifest, pathFilters: [String]) -> [FileVersionInfo] {
+    if pathFilters.isEmpty {
+        return manifest.files
+    }
+
+    return manifest.files.filter { file in
+        for filter in pathFilters {
+            if file.path == filter {
+                return true
+            }
+            if file.path.hasPrefix(filter + "/") || filter.hasPrefix(file.path + "/") {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+func checkForConflicts(files: [FileVersionInfo], outputDir: URL) -> [FileConflict] {
+    files.compactMap { file in
+        let localPath = outputDir.appendingPathComponent(file.path)
+        guard FileManager.default.fileExists(atPath: localPath.path) else {
+            return nil
+        }
+        return FileConflict(
+            relativePath: file.path,
+            existingURL: localPath,
+            existingSize: fileSize(url: localPath),
+            existingMtime: fileModificationDate(url: localPath),
+            restoreSize: file.size,
+            restoreMtime: file.modificationDate
+        )
+    }
+}
+
+func handleConflicts(_ conflicts: [FileConflict]) throws {
+    guard !conflicts.isEmpty else { return }
+
+    print("\n\(errorColor)⚠️  Warning:\(resetColor) \(conflicts.count) file\(conflicts.count == 1 ? "" : "s") will be overwritten:\n")
+
+    for conflict in conflicts.prefix(10) {
+        let existingSizeStr = conflict.existingSize.map { formatBytes($0) } ?? "unknown"
+        let restoreSizeStr = formatBytes(conflict.restoreSize)
+
+        print("  • \(conflict.relativePath)")
+        print("    \(dimColor)\(existingSizeStr) → \(restoreSizeStr)\(resetColor)")
+    }
+
+    if conflicts.count > 10 {
+        print("  \(dimColor)... and \(conflicts.count - 10) more\(resetColor)")
+    }
+
+    print("\n\(boldColor)Options:\(resetColor)")
+    print("  o - Overwrite all")
+    print("  s - Skip all (cancel restore)")
+    print("\nSelect option: ", terminator: "")
+    fflush(stdout)
+
+    guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+        throw RestoreError.cancelled
+    }
+
+    switch input {
+    case "o", "overwrite":
+        print("\(localColor)✓\(resetColor) Will overwrite existing files\n")
+    case "s", "skip", "cancel":
+        throw RestoreError.cancelled
+    default:
+        throw RestoreError.invalidSelection
+    }
+}
+
+func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remotePrefix: String, snapshot: SnapshotManifest, outputDir: URL, progress: ProgressTracker) async throws {
+    let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
+    await progress.initialize(totalFiles: files.count, totalBytes: totalBytes)
+
+    for file in files {
+        await progress.startFile(name: "\(file.path) (\(formatBytes(file.size)))")
+        await progress.printProgress()
+
+        do {
+            let remotePath = "\(remotePrefix)/files/\(file.path)/\(file.versionTimestamp)"
+            let localPath = outputDir.appendingPathComponent(file.path)
+
+            try FileManager.default.createDirectory(
+                at: localPath.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            let data = try await client.downloadFile(fileName: remotePath)
+
+            try data.write(to: localPath)
+
+            try FileManager.default.setAttributes(
+                [.modificationDate: file.modificationDate],
+                ofItemAtPath: localPath.path
+            )
+
+            await progress.fileCompleted(bytes: file.size)
+        } catch {
+            print("\n\(errorColor)✗ Failed to restore \(file.path): \(error)\(resetColor)")
+            await progress.fileFailed()
+        }
+    }
+
+    await progress.printFinal()
+}
+
+func runRestore(config: AppConfig, options: RestoreOptions) async throws {
+    let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+    let maxRetries = config.b2.maxRetries ?? 3
+    let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+    let remotePrefix = config.backup?.remotePrefix ?? "backup"
+
+    print("\n\(boldColor)Starting restore\(resetColor)")
+
+    let snapshot = try await getTargetSnapshot(client: client, remotePrefix: remotePrefix, options: options)
+    print("  📸 Snapshot: \(snapshot.timestamp)")
+    print("  📂 Total files in snapshot: \(snapshot.totalFiles)")
+
+    let filesToRestore = filterFilesToRestore(manifest: snapshot, pathFilters: options.paths)
+    print("  📤 Files to restore: \(filesToRestore.count)")
+
+    if filesToRestore.isEmpty {
+        print("\n\(dimColor)No files to restore\(resetColor)\n")
+        return
+    }
+
+    let outputDir = options.outputDirectory ?? FileManager.default.homeDirectoryForCurrentUser
+    print("  📁 Restore location: \(outputDir.path)")
+
+    let conflicts = checkForConflicts(files: filesToRestore, outputDir: outputDir)
+    if !conflicts.isEmpty && !options.force {
+        try handleConflicts(conflicts)
+    }
+
+    let progress = ProgressTracker()
+    try await downloadAndRestoreFiles(
+        client: client,
+        files: filesToRestore,
+        remotePrefix: remotePrefix,
+        snapshot: snapshot,
+        outputDir: outputDir,
+        progress: progress
+    )
+
+    print("  \(localColor)✅ Restore complete!\(resetColor)\n")
+}
+
 @main
 struct Runner {
     static func main() async {
@@ -1997,6 +2407,26 @@ struct Runner {
                 let configURL = readConfigURL(from: args)
                 let config = try loadConfig(from: configURL)
                 try await runCleanup(config: config)
+            } catch {
+                print("\u{001B}[?25h", terminator: "")
+                fflush(stdout)
+                print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
+                exit(1)
+            }
+            return
+
+        case "restore":
+            do {
+                let configURL = readConfigURL(from: args)
+                let config = try loadConfig(from: configURL)
+                let options = try parseRestoreOptions(from: args)
+
+                if options.listSnapshots {
+                    try await listSnapshotsCommand(config: config)
+                    return
+                }
+
+                try await runRestore(config: config, options: options)
             } catch {
                 print("\u{001B}[?25h", terminator: "")
                 fflush(stdout)
