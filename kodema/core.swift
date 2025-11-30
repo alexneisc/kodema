@@ -287,6 +287,10 @@ func readConfigURL(from arguments: [String]) -> URL {
     return defaultPath
 }
 
+func hasDryRunFlag(from arguments: [String]) -> Bool {
+    return arguments.contains("--dry-run") || arguments.contains("-n")
+}
+
 func loadConfig(from url: URL) throws -> AppConfig {
     let data = try Data(contentsOf: url)
     guard let yamlString = String(data: data, encoding: .utf8) else {
@@ -1352,6 +1356,7 @@ func printHelp() {
     print("  \(boldColor)help\(resetColor)       Show this help message")
     print("\nOptions:")
     print("  \(boldColor)--config\(resetColor), \(boldColor)-c\(resetColor) <path>         Specify custom config file path")
+    print("  \(boldColor)--dry-run\(resetColor), \(boldColor)-n\(resetColor)               Preview changes without making them")
     print("  \(boldColor)--snapshot\(resetColor) <timestamp>   Restore specific snapshot (for restore)")
     print("  \(boldColor)--path\(resetColor) <path>           Restore specific file/folder (for restore)")
     print("  \(boldColor)--output\(resetColor) <path>         Custom restore location (for restore)")
@@ -1359,11 +1364,14 @@ func printHelp() {
     print("  \(boldColor)--list-snapshots\(resetColor)        List available snapshots (for restore)")
     print("\nExamples:")
     print("  kodema backup                              Incremental backup with default config")
+    print("  kodema backup --dry-run                    Preview what would be backed up")
     print("  kodema mirror --config ~/my-config.yml     Simple mirror with custom config")
     print("  kodema cleanup -c ~/my-config.yml          Clean up with custom config")
+    print("  kodema cleanup --dry-run                   Preview what would be deleted")
     print("  kodema restore                             Interactive snapshot selection and restore")
     print("  kodema restore --snapshot 2024-11-27_143022    Restore specific snapshot")
     print("  kodema restore --path Documents/file.txt   Restore specific file from latest")
+    print("  kodema restore --dry-run --snapshot 2024-11-27_143022    Preview restore")
     print("  kodema restore --list-snapshots            List available snapshots")
     print("  kodema list                                Discover iCloud folders")
     print("\n\(boldColor)Backup vs Mirror:\(resetColor)")
@@ -1663,14 +1671,18 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
 
 // MARK: - Cleanup command
 
-func runCleanup(config: AppConfig) async throws {
+func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
     guard let retention = config.backup?.retention else {
         print("\(errorColor)❌ No retention policy configured\(resetColor)")
         print("Add a retention policy to your config.yml under backup.retention")
         return
     }
 
-    print("\n\(boldColor)Starting cleanup\(resetColor)")
+    if dryRun {
+        print("\n\(boldColor)Starting cleanup (DRY RUN - no changes will be made)\(resetColor)")
+    } else {
+        print("\n\(boldColor)Starting cleanup\(resetColor)")
+    }
     print("  🧹 Retention policy:")
     if let h = retention.hourly { print("     Hourly: \(h) hours") }
     if let d = retention.daily { print("     Daily: \(d) days") }
@@ -1734,31 +1746,41 @@ func runCleanup(config: AppConfig) async throws {
         print("     \(dimColor)... and \(toDelete.count - 10) more\(resetColor)")
     }
 
-    // Confirm deletion
-    print("\n  \(errorColor)⚠️  This will permanently delete \(toDelete.count) snapshots!\(resetColor)")
-    print("  Type 'yes' to continue: ", terminator: "")
-    fflush(stdout)
+    if dryRun {
+        print("\n  \(dimColor)ℹ️  Dry run - skipping actual deletion\(resetColor)")
+    } else {
+        // Confirm deletion
+        print("\n  \(errorColor)⚠️  This will permanently delete \(toDelete.count) snapshots!\(resetColor)")
+        print("  Type 'yes' to continue: ", terminator: "")
+        fflush(stdout)
 
-    guard let response = readLine(), response.lowercased() == "yes" else {
-        print("  ℹ️  Cleanup cancelled")
-        return
+        guard let response = readLine(), response.lowercased() == "yes" else {
+            print("  ℹ️  Cleanup cancelled")
+            return
+        }
     }
 
-    print("\n  🗑️  Deleting snapshots...")
+    print("\n  🗑️  \(dryRun ? "Would delete" : "Deleting") snapshots...")
 
     // Delete snapshot manifests
     var deletedSnapshots = 0
     for snapshot in toDelete {
-        do {
-            // Find manifest file
-            let manifestFiles = snapshotFiles.filter { $0.fileName.contains(snapshot.timestamp) }
-            for file in manifestFiles {
-                try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
-            }
+        if dryRun {
+            // In dry run, just count and report
             deletedSnapshots += 1
-            print("     \(dimColor)✓ Deleted \(snapshot.timestamp)\(resetColor)")
-        } catch {
-            print("     \(errorColor)✗ Failed to delete \(snapshot.timestamp): \(error)\(resetColor)")
+            print("     \(dimColor)✓ Would delete \(snapshot.timestamp)\(resetColor)")
+        } else {
+            do {
+                // Find manifest file
+                let manifestFiles = snapshotFiles.filter { $0.fileName.contains(snapshot.timestamp) }
+                for file in manifestFiles {
+                    try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
+                }
+                deletedSnapshots += 1
+                print("     \(dimColor)✓ Deleted \(snapshot.timestamp)\(resetColor)")
+            } catch {
+                print("     \(errorColor)✗ Failed to delete \(snapshot.timestamp): \(error)\(resetColor)")
+            }
         }
     }
 
@@ -1773,16 +1795,20 @@ func runCleanup(config: AppConfig) async throws {
     for marker in allSuccessMarkers {
         let timestamp = marker.fileName.split(separator: "/").last.map(String.init) ?? ""
         if toDelete.contains(where: { $0.timestamp == timestamp }) {
-            do {
-                try await client.deleteFileVersion(fileName: marker.fileName, fileId: marker.fileId)
+            if dryRun {
                 deletedMarkers += 1
-            } catch {
-                print("     \(errorColor)✗ Failed to delete marker for \(timestamp): \(error)\(resetColor)")
+            } else {
+                do {
+                    try await client.deleteFileVersion(fileName: marker.fileName, fileId: marker.fileId)
+                    deletedMarkers += 1
+                } catch {
+                    print("     \(errorColor)✗ Failed to delete marker for \(timestamp): \(error)\(resetColor)")
+                }
             }
         }
     }
     if deletedMarkers > 0 {
-        print("     ✓ Deleted \(deletedMarkers) success markers")
+        print("     ✓ \(dryRun ? "Would delete" : "Deleted") \(deletedMarkers) success markers")
     }
 
     // Build set of completed backups (excluding deleted ones)
@@ -1854,31 +1880,42 @@ func runCleanup(config: AppConfig) async throws {
     } else {
         var deletedVersions = 0
         for (file, _) in orphanedVersions {
-            do {
-                try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
+            if dryRun {
                 deletedVersions += 1
                 if deletedVersions % 100 == 0 {
-                    print("     \(dimColor)Deleted \(deletedVersions)/\(orphanedVersions.count) versions...\(resetColor)")
+                    print("     \(dimColor)Would delete \(deletedVersions)/\(orphanedVersions.count) versions...\(resetColor)")
                 }
-            } catch {
-                print("     \(errorColor)✗ Failed to delete \(file.fileName): \(error)\(resetColor)")
+            } else {
+                do {
+                    try await client.deleteFileVersion(fileName: file.fileName, fileId: file.fileId)
+                    deletedVersions += 1
+                    if deletedVersions % 100 == 0 {
+                        print("     \(dimColor)Deleted \(deletedVersions)/\(orphanedVersions.count) versions...\(resetColor)")
+                    }
+                } catch {
+                    print("     \(errorColor)✗ Failed to delete \(file.fileName): \(error)\(resetColor)")
+                }
             }
         }
-        print("     ✓ Deleted \(deletedVersions) orphaned versions")
+        print("     ✓ \(dryRun ? "Would delete" : "Deleted") \(deletedVersions) orphaned versions")
     }
 
     print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
-    print("\(boldColor)Cleanup Complete!\(resetColor)")
+    if dryRun {
+        print("\(boldColor)Dry Run Complete!\(resetColor)")
+    } else {
+        print("\(boldColor)Cleanup Complete!\(resetColor)")
+    }
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
-    print("  🗑️  Deleted \(deletedSnapshots) snapshots")
-    print("  🧹 Cleaned up orphaned file versions")
+    print("  🗑️  \(dryRun ? "Would delete" : "Deleted") \(deletedSnapshots) snapshots")
+    print("  🧹 \(dryRun ? "Would clean up" : "Cleaned up") orphaned file versions")
     print("  ✅ Retained \(toKeep.count) snapshots")
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
 }
 
 // MARK: - Main backup logic (incremental with snapshots)
 
-func runIncrementalBackup(config: AppConfig) async throws {
+func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws {
     let progress = ProgressTracker()
 
     let excludeHidden = config.filters?.excludeHidden ?? true
@@ -1902,7 +1939,11 @@ func runIncrementalBackup(config: AppConfig) async throws {
     let timestamp = generateTimestamp()
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
 
-    print("\n\(boldColor)Starting incremental backup\(resetColor)")
+    if dryRun {
+        print("\n\(boldColor)Starting incremental backup (DRY RUN - no changes will be made)\(resetColor)")
+    } else {
+        print("\n\(boldColor)Starting incremental backup\(resetColor)")
+    }
     print("  📸 Snapshot: \(timestamp)")
     print("  📂 Scanned files: \(allFiles.count)")
 
@@ -1926,6 +1967,21 @@ func runIncrementalBackup(config: AppConfig) async throws {
 
     print("  📤 Files to upload: \(filesToBackup.count) (skipping \(allFiles.count - filesToBackup.count) unchanged)")
 
+    let totalBytes = filesToBackup.reduce(Int64(0)) { $0 + ($1.file.size ?? 0) }
+    print("  💾 Total size: \(formatBytes(totalBytes))")
+
+    if dryRun {
+        print("\n  \(dimColor)ℹ️  Dry run - no files will be uploaded\(resetColor)")
+        print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("\(boldColor)Dry Run Complete!\(resetColor)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("  📤 Would upload: \(filesToBackup.count) files")
+        print("  💾 Total size: \(formatBytes(totalBytes))")
+        print("  📸 Snapshot: \(timestamp)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+        return
+    }
+
     // Sort: Local first
     filesToBackup.sort {
         if $0.file.status == $1.file.status {
@@ -1941,7 +1997,6 @@ func runIncrementalBackup(config: AppConfig) async throws {
     let uploadConcurrency = max(1, config.b2.uploadConcurrency ?? 1)
 
     // Initialize progress
-    let totalBytes = filesToBackup.reduce(Int64(0)) { $0 + ($1.file.size ?? 0) }
     await progress.initialize(totalFiles: filesToBackup.count, totalBytes: totalBytes)
     print("")
 
@@ -2559,13 +2614,17 @@ func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remoteP
     await progress.printFinal()
 }
 
-func runRestore(config: AppConfig, options: RestoreOptions) async throws {
+func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false) async throws {
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
 
-    print("\n\(boldColor)Starting restore\(resetColor)")
+    if dryRun {
+        print("\n\(boldColor)Starting restore (DRY RUN - no changes will be made)\(resetColor)")
+    } else {
+        print("\n\(boldColor)Starting restore\(resetColor)")
+    }
 
     let snapshot = try await getTargetSnapshot(client: client, remotePrefix: remotePrefix, options: options)
     print("  📸 Snapshot: \(snapshot.timestamp)")
@@ -2582,9 +2641,39 @@ func runRestore(config: AppConfig, options: RestoreOptions) async throws {
     let outputDir = options.outputDirectory ?? FileManager.default.homeDirectoryForCurrentUser
     print("  📁 Restore location: \(outputDir.path)")
 
+    let totalBytes = filesToRestore.reduce(Int64(0)) { $0 + $1.size }
+    print("  💾 Total size: \(formatBytes(totalBytes))")
+
     let conflicts = checkForConflicts(files: filesToRestore, outputDir: outputDir)
-    if !conflicts.isEmpty && !options.force {
-        try handleConflicts(conflicts)
+    if !conflicts.isEmpty {
+        print("  ⚠️  Conflicts: \(conflicts.count) files already exist")
+        if dryRun {
+            print("\n  \(dimColor)Files that would be overwritten:\(resetColor)")
+            for conflict in conflicts.prefix(10) {
+                print("     \(dimColor)• \(conflict)\(resetColor)")
+            }
+            if conflicts.count > 10 {
+                print("     \(dimColor)... and \(conflicts.count - 10) more\(resetColor)")
+            }
+        } else if !options.force {
+            try handleConflicts(conflicts)
+        }
+    }
+
+    if dryRun {
+        print("\n  \(dimColor)ℹ️  Dry run - no files will be downloaded\(resetColor)")
+        print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("\(boldColor)Dry Run Complete!\(resetColor)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("  📤 Would restore: \(filesToRestore.count) files")
+        print("  💾 Total size: \(formatBytes(totalBytes))")
+        print("  📸 From snapshot: \(snapshot.timestamp)")
+        print("  📁 To: \(outputDir.path)")
+        if !conflicts.isEmpty {
+            print("  ⚠️  Would overwrite: \(conflicts.count) files")
+        }
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+        return
     }
 
     let progress = ProgressTracker()
@@ -2627,7 +2716,8 @@ struct Runner {
             do {
                 let configURL = readConfigURL(from: args)
                 let config = try loadConfig(from: configURL)
-                try await runIncrementalBackup(config: config)
+                let dryRun = hasDryRunFlag(from: args)
+                try await runIncrementalBackup(config: config, dryRun: dryRun)
             } catch {
                 print("\u{001B}[?25h", terminator: "")
                 fflush(stdout)
@@ -2653,7 +2743,8 @@ struct Runner {
             do {
                 let configURL = readConfigURL(from: args)
                 let config = try loadConfig(from: configURL)
-                try await runCleanup(config: config)
+                let dryRun = hasDryRunFlag(from: args)
+                try await runCleanup(config: config, dryRun: dryRun)
             } catch {
                 print("\u{001B}[?25h", terminator: "")
                 fflush(stdout)
@@ -2667,13 +2758,14 @@ struct Runner {
                 let configURL = readConfigURL(from: args)
                 let config = try loadConfig(from: configURL)
                 let options = try parseRestoreOptions(from: args)
+                let dryRun = hasDryRunFlag(from: args)
 
                 if options.listSnapshots {
                     try await listSnapshotsCommand(config: config, options: options)
                     return
                 }
 
-                try await runRestore(config: config, options: options)
+                try await runRestore(config: config, options: options, dryRun: dryRun)
             } catch {
                 print("\u{001B}[?25h", terminator: "")
                 fflush(stdout)

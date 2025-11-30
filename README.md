@@ -106,6 +106,27 @@ kodema mirror
 | `kodema list` | Discover iCloud folders |
 | `kodema help` | Show help message |
 
+### Dry Run Mode
+
+Preview changes before making them with the `--dry-run` (or `-n`) flag:
+
+```bash
+# Preview what would be backed up
+kodema backup --dry-run
+
+# Preview what would be deleted
+kodema cleanup --dry-run
+
+# Preview what would be restored
+kodema restore --dry-run --snapshot 2024-11-27_143022
+```
+
+Dry run mode:
+- Shows file counts and total sizes
+- Displays conflicts (for restore)
+- Does not upload, download, or delete anything
+- Does not modify any remote state
+
 ## Configuration
 
 ### Minimal Config

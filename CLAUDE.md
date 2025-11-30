@@ -146,21 +146,24 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema backup [--config <path>]` (lines 1859-2059)**
+**`kodema backup [--config <path>] [--dry-run]` (lines 1914-2124)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
-4. Sort files (local first, then iCloud)
-5. Upload initial manifest to B2 (establishes snapshot immediately)
-6. Upload changed files with progress tracking
+4. **If --dry-run**: Show preview (file count, total size) and exit early
+5. Sort files (local first, then iCloud)
+6. Upload initial manifest to B2 (establishes snapshot immediately)
+7. Upload changed files with progress tracking
    - Checks for shutdown request before each file (graceful shutdown support)
-7. Incrementally update manifest every N files (prevents orphaned files on interruption)
-8. Upload final manifest with deleted files filtered
-9. Upload success marker to indicate backup completed successfully (skipped if shutdown requested)
-10. Evict iCloud files to free disk space
+8. Incrementally update manifest every N files (prevents orphaned files on interruption)
+9. Upload final manifest with deleted files filtered
+10. Upload success marker to indicate backup completed successfully (skipped if shutdown requested)
+11. Evict iCloud files to free disk space
 - Supports custom config via `--config` or `-c` flag
+- Supports dry-run mode via `--dry-run` or `-n` flag
 - Manifest update frequency controlled by `backup.manifestUpdateInterval` (default: 50 files)
 - **Graceful shutdown**: On SIGINT/SIGTERM, finishes current file, saves partial manifest, exits cleanly
+- **Dry-run**: Shows files to upload and total size without making any changes
 
 **`kodema mirror [--config <path>]` (lines 1836-1939)**
 1. Scan all files
@@ -169,29 +172,34 @@ kodema backup
 4. Simple flat structure in B2
 - Supports custom config via `--config` or `-c` flag
 
-**`kodema cleanup [--config <path>]` (lines 1625-1820)**
+**`kodema cleanup [--config <path>] [--dry-run]` (lines 1670-1910)**
 1. Fetch all snapshot manifests from B2
 2. Apply retention policy to select snapshots to keep
-3. Delete old snapshot manifests
-4. Fetch success markers and delete markers for removed snapshots
-5. Use hybrid orphan detection to find orphaned file versions:
+3. **If --dry-run**: Show preview of what would be deleted and exit
+4. Confirm deletion (skipped in dry-run mode)
+5. Delete old snapshot manifests
+6. Fetch success markers and delete markers for removed snapshots
+7. Use hybrid orphan detection to find orphaned file versions:
    - For completed backups: all files with that timestamp are valid
    - For incomplete backups: download manifest to verify referenced files
-6. Delete orphaned file versions
+8. Delete orphaned file versions
 - Supports custom config via `--config` or `-c` flag
+- Supports dry-run mode via `--dry-run` or `-n` flag
 - Performance: only downloads manifests for incomplete backups (typically 0-5% of total)
+- **Dry-run**: Shows snapshots to delete, orphaned files to remove, without making changes
 
-**`kodema restore [options]` (lines 1995-2354)**
-1. Parse restore options (snapshot, paths, output, force, list-snapshots)
+**`kodema restore [options]` (lines 2613-2686)**
+1. Parse restore options (snapshot, paths, output, force, list-snapshots, dry-run)
 2. If `--list-snapshots`: display all available snapshots and exit
 3. Get target snapshot (interactive selection or via `--snapshot` flag)
 4. Filter files to restore (all or specific paths via `--path`)
 5. Determine output directory (original location or `--output`)
 6. Check for file conflicts with existing files
-7. If conflicts and no `--force`: prompt user for confirmation
-8. Download files from B2 with progress tracking
-9. Write files and restore modification timestamps
-10. Report completion with success/failure counts
+7. **If --dry-run**: Show preview (files, size, conflicts) and exit
+8. If conflicts and no `--force`: prompt user for confirmation (skipped in dry-run)
+9. Download files from B2 with progress tracking
+10. Write files and restore modification timestamps
+11. Report completion with success/failure counts
 
 **Flags:**
 - `--snapshot <timestamp>` - Restore specific snapshot
@@ -199,6 +207,7 @@ kodema backup
 - `--output <path>` - Custom restore location (default: original)
 - `--force` - Skip overwrite confirmation
 - `--list-snapshots` - List available snapshots
+- `--dry-run`, `-n` - Preview restore without downloading files
 
 **Key functions:**
 - `parseRestoreOptions()` - Parse command-line flags
