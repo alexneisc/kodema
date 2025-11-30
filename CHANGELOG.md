@@ -2,6 +2,83 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.5.0] - 2025-11-30
+
+### Added - Reliability & Safety Features
+
+#### Dry-Run Mode
+- **`--dry-run` flag** (also `-n`) - Preview operations without making changes
+- **Backup preview** - Shows file count and total size to upload
+- **Cleanup preview** - Shows snapshots to delete, orphaned files count
+- **Restore preview** - Shows files to restore, size, and conflict warnings
+- Safe testing of retention policies before actual cleanup
+- No remote state modifications in dry-run mode
+
+#### Incremental Manifest Updates
+- **Periodic manifest uploads** during backup to prevent orphaned files
+- Configurable update interval via `backup.manifestUpdateInterval` (default: 50 files)
+- Reduces orphaned files from potentially thousands to maximum N files
+- Initial manifest created before uploading files
+- Final manifest uploaded on completion with deleted files filtered
+- More reliable backup recovery on interruption
+
+#### Success Markers & Hybrid Orphan Detection
+- **Success markers** - Small completion markers distinguish complete vs incomplete backups
+- **Hybrid orphan detection** - Efficient cleanup without downloading all manifests
+  - Completed backups: All files with that timestamp are valid (no manifest download)
+  - Incomplete backups: Download manifest to verify referenced files
+- Performance: +100ms best case, +5 seconds worst case (vs +25-30 for all manifests)
+- Only 0-5% of backups typically need manifest download
+
+#### Graceful Shutdown
+- **SIGINT/SIGTERM handling** - Ctrl+C allows current file to complete
+- Sets shutdown flag instead of immediate exit
+- Saves partial manifest with progress before exit
+- Next backup resumes from checkpoint
+- Clean exit with appropriate exit code (130 for SIGINT)
+- Cursor visibility restored on shutdown
+
+#### Streaming Downloads for Restore
+- **Memory efficient restore** - Downloads stream directly to disk
+- Constant 8-16MB RAM usage regardless of file size
+- No RAM limits for large file restoration
+- `downloadFileStreaming()` uses URLSession.download(for:)
+- Small files (manifests) still use in-memory download
+
+### Changed
+
+#### Configuration
+- Added `backup.manifestUpdateInterval` parameter (default: 50)
+- Controls frequency of manifest updates during backup
+
+### Technical Details
+
+**New Functions:**
+- `hasDryRunFlag()` - Parse --dry-run/-n flags from arguments
+- `uploadManifest()` - Helper to create and upload snapshot manifest
+- `uploadSuccessMarker()` - Create completion marker for backup
+- `downloadFileStreaming()` - Stream files directly to disk
+- `setShutdownRequested()`, `isShutdownRequested()` - Thread-safe shutdown flag
+
+**Modified Functions:**
+- `runCleanup()` - Added dryRun parameter, skip deletions in dry-run
+- `runIncrementalBackup()` - Added dryRun parameter, manifest updates, graceful shutdown
+- `runRestore()` - Added dryRun parameter, streaming downloads
+
+**Signal Handling:**
+- Global `shutdownRequested` flag with NSLock for thread safety
+- Check before each file upload in backup loop
+- Save partial manifest on shutdown request
+
+**Storage Structure:**
+- Added `backup/.success-markers/<timestamp>` completion markers
+- Markers used to avoid downloading manifests for completed backups
+
+### Documentation
+- Updated CLAUDE.md with all new features and line numbers
+- Updated README.md with dry-run examples and usage
+- Updated help text with --dry-run flag documentation
+
 ## [0.4.0] - 2025-11-30
 
 ### Added - Restore Functionality
