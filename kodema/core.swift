@@ -1265,19 +1265,36 @@ func guessContentType(for url: URL) -> String? {
 
 // MARK: - Signal handling
 
+// Global flag for graceful shutdown
+// Access is protected by shutdownLock - safe to disable concurrency checking
+private nonisolated(unsafe) var shutdownRequested: Bool = false
+private let shutdownLock = NSLock()
+
+func setShutdownRequested() {
+    shutdownLock.lock()
+    shutdownRequested = true
+    shutdownLock.unlock()
+}
+
+func isShutdownRequested() -> Bool {
+    shutdownLock.lock()
+    defer { shutdownLock.unlock() }
+    return shutdownRequested
+}
+
 func setupSignalHandlers() {
     // Handle SIGINT (Control+C)
     signal(SIGINT) { _ in
-        print("\u{001B}[?25h") // Show cursor
+        print("\n\n\(errorColor)⚠️  Shutdown requested... finishing current file\(resetColor)")
         fflush(stdout)
-        exit(130)
+        setShutdownRequested()
     }
 
     // Handle SIGTERM
     signal(SIGTERM) { _ in
-        print("\u{001B}[?25h") // Show cursor
+        print("\n\n\(errorColor)⚠️  Shutdown requested... finishing current file\(resetColor)")
         fflush(stdout)
-        exit(143)
+        setShutdownRequested()
     }
 }
 
@@ -1919,6 +1936,12 @@ func runIncrementalBackup(config: AppConfig) async throws {
     }
 
     for (file, relativePath) in filesToBackup {
+        // Check for graceful shutdown request
+        if isShutdownRequested() {
+            print("\n\(errorColor)⚠️  Shutdown in progress - saving partial manifest...\(resetColor)")
+            break  // Exit loop, will save manifest below
+        }
+
         await progress.printProgress()
 
         do {
@@ -2010,10 +2033,25 @@ func runIncrementalBackup(config: AppConfig) async throws {
     let currentPaths = Set(allFiles.map { buildRelativePath(for: $0.url, from: folders) })
     manifestFiles = manifestFiles.filter { currentPaths.contains($0.path) }
 
-    // Upload final manifest
-    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+    // Check if shutdown was requested
+    if isShutdownRequested() {
+        // Graceful shutdown - save partial manifest without success marker
+        print("  💾 Uploading partial manifest...")
+        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
 
-    // Upload success marker to indicate backup completed successfully
+        await progress.printFinal()
+        print("  📸 Partial manifest uploaded: \(remotePrefix)/snapshots/\(timestamp)/manifest.json")
+        print("  ⚠️  Backup interrupted - progress saved")
+        print("  ℹ️  Run 'kodema backup' again to continue from where you left off")
+
+        // Show cursor and exit with interrupted status
+        print("\u{001B}[?25h")
+        fflush(stdout)
+        exit(130)  // Standard exit code for SIGINT
+    }
+
+    // Normal completion - upload final manifest and success marker
+    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
     try await uploadSuccessMarker(client: client, timestamp: timestamp, remotePrefix: remotePrefix)
 
     await progress.printFinal()

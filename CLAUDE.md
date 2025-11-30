@@ -119,7 +119,12 @@ kodema backup
 - `ProgressTracker` actor: Thread-safe progress state
 - ANSI terminal UI: progress bar, speed, ETA, current file
 - Cursor management: hides cursor during progress, restores on exit/error
-- Signal handlers (SIGINT, SIGTERM): Ensure cursor is shown before exit
+- **Graceful Shutdown** (lines 1266-1298): Signal handlers for SIGINT/SIGTERM
+  - Sets global flag instead of immediate exit
+  - Allows current file upload to complete
+  - Saves partial manifest with progress
+  - Shows cursor and exits cleanly with appropriate exit code
+  - Preserves all uploaded files for resume on next backup
 
 ### Command Flow
 
@@ -138,19 +143,21 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema backup [--config <path>]` (lines 1773-1962)**
+**`kodema backup [--config <path>]` (lines 1859-2059)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
 4. Sort files (local first, then iCloud)
 5. Upload initial manifest to B2 (establishes snapshot immediately)
 6. Upload changed files with progress tracking
+   - Checks for shutdown request before each file (graceful shutdown support)
 7. Incrementally update manifest every N files (prevents orphaned files on interruption)
 8. Upload final manifest with deleted files filtered
-9. Upload success marker to indicate backup completed successfully
+9. Upload success marker to indicate backup completed successfully (skipped if shutdown requested)
 10. Evict iCloud files to free disk space
 - Supports custom config via `--config` or `-c` flag
 - Manifest update frequency controlled by `backup.manifestUpdateInterval` (default: 50 files)
+- **Graceful shutdown**: On SIGINT/SIGTERM, finishes current file, saves partial manifest, exits cleanly
 
 **`kodema mirror [--config <path>]` (lines 1836-1939)**
 1. Scan all files
@@ -306,7 +313,7 @@ Package definition: `Package.swift` (in repository root)
 
 5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
 
-6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1982)
+6. **Signal Handling**: setupSignalHandlers() must be called early (line 2116). Implements graceful shutdown - finishes current file and saves progress before exiting. Don't use SIGKILL (kill -9) as it bypasses graceful shutdown.
 
 7. **Restore Memory Usage**: Downloads load entire file into RAM - acceptable for most files (<1GB) but may cause issues with very large files
 
