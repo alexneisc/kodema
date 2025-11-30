@@ -54,10 +54,11 @@ kodema backup
 
 ### Core Components (kodema/core.swift)
 
-**Configuration System (lines 6-59)**
+**Configuration System (lines 6-61)**
 - YAML-based config loading via Yams library
 - Nested config structs: `B2Config`, `TimeoutsConfig`, `IncludeConfig`, `FiltersConfig`, `RetentionConfig`, `BackupConfig`, `MirrorConfig`
 - Default config location: `~/.config/kodema/config.yml`
+- `BackupConfig.manifestUpdateInterval`: Frequency of incremental manifest updates (default: 50 files)
 
 **File Discovery & Scanning (lines 388-449)**
 - `buildFoldersToScan()`: Determines folders to backup (custom list or all iCloud Drive folders)
@@ -80,7 +81,7 @@ kodema backup
 - Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
 - Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
 
-**Versioning & Snapshots (lines 70-86, 1066-1149)**
+**Versioning & Snapshots (lines 70-86, 1066-1179)**
 - `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
 - `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
 - **IMPORTANT**: Each snapshot manifest contains ALL files existing at that point in time, not just changed files
@@ -88,6 +89,12 @@ kodema backup
   - Changed files get updated version timestamps
   - Deleted files are removed from manifest
 - `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
+- `uploadManifest()`: Helper function to create and upload manifest to B2
+- **Incremental Manifest Updates**: Prevents orphaned files on backup interruption
+  - Initial manifest uploaded at backup start (empty or with previous files)
+  - Manifest re-uploaded every N files (configurable via `manifestUpdateInterval`)
+  - Final manifest uploaded at backup end (with deleted files filtered)
+  - Ensures every uploaded file is tracked in manifest, even if backup is interrupted
 - Storage structure:
   - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
   - `backup/files/{relative_path}/{timestamp}` - versioned file content
@@ -122,15 +129,18 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema backup [--config <path>]` (lines 1670-1832)**
+**`kodema backup [--config <path>]` (lines 1759-1935)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
 4. Sort files (local first, then iCloud)
-5. Upload changed files with progress tracking
-6. Create and upload snapshot manifest
-7. Evict iCloud files to free disk space
+5. Upload initial manifest to B2 (establishes snapshot immediately)
+6. Upload changed files with progress tracking
+7. Incrementally update manifest every N files (prevents orphaned files on interruption)
+8. Upload final manifest with deleted files filtered
+9. Evict iCloud files to free disk space
 - Supports custom config via `--config` or `-c` flag
+- Manifest update frequency controlled by `backup.manifestUpdateInterval` (default: 50 files)
 
 **`kodema mirror [--config <path>]` (lines 1836-1939)**
 1. Scan all files
@@ -249,9 +259,9 @@ Package definition: `Package.swift` (in repository root)
 
 ## Code Organization
 
-**Single File Architecture**: All code in `kodema/core.swift` (~2000 lines)
+**Single File Architecture**: All code in `kodema/core.swift` (~1950 lines)
 - MARK comments divide sections: Models, Helpers, B2 API, Commands
-- Entry point: `@main struct Runner` (line 1941)
+- Entry point: `@main struct Runner` (line 1979)
 - Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant and is used by `printVersion()` and `printHelp()`
 
 ## Code Style Guidelines
@@ -275,16 +285,18 @@ Package definition: `Package.swift` (in repository root)
 
 2. **Part Size**: Must be ≥ B2 minimum (5MB), configured in MB not bytes
 
-3. **File Size Threshold**: Currently 5GB (lines 1774, 1910) - could make configurable
+3. **File Size Threshold**: Currently 5GB (lines 1872, 1883) - could make configurable
 
 4. **Retention Cleanup**: Irreversible! Users should test policy before running cleanup
 
 5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
 
-6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1944)
+6. **Signal Handling**: Critical to restore cursor visibility on interrupt - setupSignalHandlers() must be called early (line 1982)
 
 7. **Restore Memory Usage**: Downloads load entire file into RAM - acceptable for most files (<1GB) but may cause issues with very large files
 
 8. **Restore Conflicts**: Without `--force`, user must manually confirm overwrites - be careful when restoring to original location
 
 9. **Sequential Downloads**: Restore downloads files one at a time - no parallelization (avoids B2 rate limits but slower for many small files)
+
+10. **Manifest Update Frequency**: Low `manifestUpdateInterval` values (e.g., <10) increase B2 API calls and may slow down backup. High values (e.g., >100) mean more orphaned files if backup is interrupted. Default of 50 is a good balance.

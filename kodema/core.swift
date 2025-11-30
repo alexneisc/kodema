@@ -43,6 +43,7 @@ struct RetentionConfig: Decodable {
 struct BackupConfig: Decodable {
     let remotePrefix: String?
     let retention: RetentionConfig?
+    let manifestUpdateInterval: Int?  // Update manifest every N files
 }
 
 struct MirrorConfig: Decodable {
@@ -1153,6 +1154,30 @@ func fetchLatestManifest(client: B2Client, remotePrefix: String) async throws ->
     return try decoder.decode(SnapshotManifest.self, from: data)
 }
 
+// Upload manifest to B2
+func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestamp: String, remotePrefix: String) async throws {
+    let manifest = SnapshotManifest(
+        timestamp: timestamp,
+        createdAt: Date(),
+        files: manifestFiles,
+        totalFiles: manifestFiles.count,
+        totalBytes: manifestFiles.reduce(0) { $0 + $1.size }
+    )
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let manifestData = try encoder.encode(manifest)
+
+    let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
+    let manifestTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("manifest_\(timestamp).json")
+    try manifestData.write(to: manifestTempURL)
+    defer { try? FileManager.default.removeItem(at: manifestTempURL) }
+
+    let manifestSha1 = try sha1HexStream(fileURL: manifestTempURL)
+    try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
+}
+
 // Build relative path from home or scan root
 func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
     let localPath = localURL.path
@@ -1806,6 +1831,19 @@ func runIncrementalBackup(config: AppConfig) async throws {
         manifestFiles = prevManifest.files
     }
 
+    // Get manifest update interval from config (default: 50 files)
+    let manifestUpdateInterval = config.backup?.manifestUpdateInterval ?? 50
+    var filesUploadedSinceLastManifest = 0
+
+    // Upload initial manifest (empty or with previous files) to establish snapshot
+    do {
+        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+        print("  📸 Initial manifest created")
+    } catch {
+        print("  \(errorColor)⚠️  Failed to create initial manifest: \(error)\(resetColor)")
+        throw error  // Critical: cannot proceed without manifest
+    }
+
     for (file, relativePath) in filesToBackup {
         await progress.printProgress()
 
@@ -1875,6 +1913,18 @@ func runIncrementalBackup(config: AppConfig) async throws {
             if status == "Cloud" {
                 evictIfUbiquitous(url: url)
             }
+
+            // Incremental manifest update
+            filesUploadedSinceLastManifest += 1
+            if filesUploadedSinceLastManifest >= manifestUpdateInterval {
+                do {
+                    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+                    filesUploadedSinceLastManifest = 0
+                } catch {
+                    // Non-fatal: log but continue backup
+                    print("  \(errorColor)⚠️  Failed to update manifest: \(error)\(resetColor)")
+                }
+            }
         } catch TimeoutError.timedOut {
             await progress.fileFailed()
         } catch {
@@ -1886,31 +1936,11 @@ func runIncrementalBackup(config: AppConfig) async throws {
     let currentPaths = Set(allFiles.map { buildRelativePath(for: $0.url, from: folders) })
     manifestFiles = manifestFiles.filter { currentPaths.contains($0.path) }
 
-    // Create and upload manifest
-    let manifest = SnapshotManifest(
-        timestamp: timestamp,
-        createdAt: Date(),
-        files: manifestFiles,
-        totalFiles: manifestFiles.count,
-        totalBytes: manifestFiles.reduce(0) { $0 + $1.size }
-    )
-
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let manifestData = try encoder.encode(manifest)
-
-    // Upload manifest
-    let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
-    let manifestTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("manifest_\(timestamp).json")
-    try manifestData.write(to: manifestTempURL)
-
-    let manifestSha1 = try sha1HexStream(fileURL: manifestTempURL)
-    try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
-    try? FileManager.default.removeItem(at: manifestTempURL)
+    // Upload final manifest
+    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
 
     await progress.printFinal()
-    print("  📸 Snapshot manifest uploaded: \(manifestPath)")
+    print("  📸 Snapshot manifest uploaded: \(remotePrefix)/snapshots/\(timestamp)/manifest.json")
 }
 
 // MARK: - Mirror logic (simple upload all)

@@ -12,6 +12,7 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 
 🎯 **Smart & Efficient:**
 - Only uploads changed files (size + modification time detection)
+- Incremental manifest updates (prevents orphaned files on interruption)
 - Handles iCloud files automatically (downloads on-demand)
 - Streams large files (no RAM limits)
 - Configurable retry logic with exponential backoff
@@ -210,6 +211,11 @@ b2:
   partSizeMB: 100                 # Part size for large files
   uploadConcurrency: 1            # Parallel uploads (beta)
   maxRetries: 3                   # Retry failed uploads
+
+backup:
+  manifestUpdateInterval: 50      # Update manifest every N files
+                                  # Lower = more reliable on interruption
+                                  # Higher = fewer API calls
 ```
 
 ## Building from Source

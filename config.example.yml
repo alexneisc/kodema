@@ -101,6 +101,13 @@ backup:
     daily: 30       # Keep ONE snapshot per day for last 30 days
     weekly: 12      # Keep ONE snapshot per week for last 12 weeks (~3 months)
     monthly: 12     # Keep ONE snapshot per month for last 12 months
+
+  # Manifest update frequency
+  # Update the snapshot manifest every N successfully uploaded files
+  # This prevents orphaned files if backup is interrupted
+  # Lower = more reliable but more API calls, Higher = fewer API calls but more orphans on interrupt
+  # Default: 50 (reasonable balance)
+  manifestUpdateInterval: 50
   
   # Example retention schedules for different needs:
   
