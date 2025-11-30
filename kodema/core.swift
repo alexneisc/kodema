@@ -1075,7 +1075,7 @@ final class B2Client {
         }
     }
 
-    // Download file by name
+    // Download file by name (loads into RAM - use for small files like manifests)
     func downloadFile(fileName: String) async throws -> Data {
         try await ensureAuthorized()
         guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
@@ -1093,6 +1093,37 @@ final class B2Client {
         do {
             let (data, _) = try await session.data(for: req, timeout: networkTimeout)
             return data
+        } catch {
+            throw mapHTTPErrorToB2(error)
+        }
+    }
+
+    // Download file directly to disk (streaming - efficient for large files)
+    func downloadFileStreaming(fileName: String, to localURL: URL) async throws {
+        try await ensureAuthorized()
+        guard let auth = authorize else { throw B2Error.invalidResponse("No authorize data") }
+
+        // B2 download URL format: {downloadUrl}/file/{bucketName}/{fileName}
+        let encodedFileName = fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName
+        guard let url = URL(string: "\(auth.downloadUrl)/file/\(cfg.bucketName)/\(encodedFileName)") else {
+            throw HTTPError.invalidURL
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.addValue(auth.authorizationToken, forHTTPHeaderField: "Authorization")
+
+        do {
+            // Download to temporary location
+            let (tempURL, _) = try await session.download(for: req)
+
+            // Move to final destination
+            // Remove existing file if present (for overwrite case)
+            if FileManager.default.fileExists(atPath: localURL.path) {
+                try FileManager.default.removeItem(at: localURL)
+            }
+
+            try FileManager.default.moveItem(at: tempURL, to: localURL)
         } catch {
             throw mapHTTPErrorToB2(error)
         }
@@ -2510,9 +2541,8 @@ func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remoteP
                 withIntermediateDirectories: true
             )
 
-            let data = try await client.downloadFile(fileName: remotePath)
-
-            try data.write(to: localPath)
+            // Use streaming download to avoid loading entire file into RAM
+            try await client.downloadFileStreaming(fileName: remotePath, to: localPath)
 
             try FileManager.default.setAttributes(
                 [.modificationDate: file.modificationDate],

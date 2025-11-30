@@ -71,14 +71,17 @@ kodema backup
 - `evictIfUbiquitous()`: Removes local copy after upload to save disk space
 - Uses `URLResourceKey`: `.isUbiquitousItemKey`, `.ubiquitousItemDownloadingStatusKey`
 
-**B2 API Client (lines 686-1024)**
+**B2 API Client (lines 686-1131)**
 - `B2Client` class handles all Backblaze API operations
 - Auth flow: `ensureAuthorized()` → caches `B2AuthorizeResponse`
 - Bucket resolution: `ensureBucketId()` resolves bucket name to ID
-- Upload strategies:
+- **Upload strategies:**
   - Small files (≤5GB): `uploadSmallFile()` uses `httpBodyStream` to avoid loading entire file in RAM
   - Large files (>5GB): `uploadLargeFile()` splits into parts, uploads with retry logic
-- Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
+  - Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
+- **Download strategies:**
+  - `downloadFile()`: Loads entire file into RAM (use for small files like manifests ~500KB)
+  - `downloadFileStreaming()`: Streams directly to disk (efficient for large files, constant RAM usage)
 - Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
 
 **Versioning & Snapshots (lines 70-86, 1066-1193)**
@@ -315,7 +318,7 @@ Package definition: `Package.swift` (in repository root)
 
 6. **Signal Handling**: setupSignalHandlers() must be called early (line 2116). Implements graceful shutdown - finishes current file and saves progress before exiting. Don't use SIGKILL (kill -9) as it bypasses graceful shutdown.
 
-7. **Restore Memory Usage**: Downloads load entire file into RAM - acceptable for most files (<1GB) but may cause issues with very large files
+7. **Restore Memory Usage**: Now uses streaming downloads (constant ~8-16MB RAM usage regardless of file size). Manifests still load into RAM but are small (~500KB).
 
 8. **Restore Conflicts**: Without `--force`, user must manually confirm overwrites - be careful when restoring to original location
 
