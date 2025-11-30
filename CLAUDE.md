@@ -81,7 +81,7 @@ kodema backup
 - Part upload uses concurrent uploads (configurable via `uploadConcurrency`)
 - Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
 
-**Versioning & Snapshots (lines 70-86, 1066-1179)**
+**Versioning & Snapshots (lines 70-86, 1066-1193)**
 - `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
 - `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
 - **IMPORTANT**: Each snapshot manifest contains ALL files existing at that point in time, not just changed files
@@ -90,21 +90,30 @@ kodema backup
   - Deleted files are removed from manifest
 - `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
 - `uploadManifest()`: Helper function to create and upload manifest to B2
+- `uploadSuccessMarker()`: Uploads completion marker after successful backup
 - **Incremental Manifest Updates**: Prevents orphaned files on backup interruption
   - Initial manifest uploaded at backup start (empty or with previous files)
   - Manifest re-uploaded every N files (configurable via `manifestUpdateInterval`)
   - Final manifest uploaded at backup end (with deleted files filtered)
+  - Success marker uploaded after successful backup completion
   - Ensures every uploaded file is tracked in manifest, even if backup is interrupted
 - Storage structure:
   - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
   - `backup/files/{relative_path}/{timestamp}` - versioned file content
+  - `backup/.success-markers/{timestamp}` - completion markers for successful backups
 - `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
 
-**Retention & Cleanup (lines 1406-1666)**
+**Retention & Cleanup (lines 1625-1820)**
 - Time Machine-style retention policy: hourly → daily → weekly → monthly
 - `classifySnapshot()`: Categorizes snapshots by age
 - `selectSnapshotsToKeep()`: Groups by time period, keeps latest in each bucket
-- Cleanup deletes both snapshot manifests and orphaned file versions
+- **Hybrid Orphan Detection**: Uses success markers for efficient cleanup
+  - Fetches success markers to identify completed vs incomplete backups
+  - For completed backups: all files with that timestamp are valid (no manifest download needed)
+  - For incomplete backups: downloads manifest to verify which files are actually referenced
+  - Deletes success markers for removed snapshots
+  - Significantly faster than downloading all manifests (only incomplete backups need manifest check)
+- Cleanup deletes: snapshot manifests, success markers, and orphaned file versions
 
 **Progress Tracking (lines 96-239)**
 - `ProgressTracker` actor: Thread-safe progress state
@@ -129,7 +138,7 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema backup [--config <path>]` (lines 1759-1935)**
+**`kodema backup [--config <path>]` (lines 1773-1962)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
@@ -138,7 +147,8 @@ kodema backup
 6. Upload changed files with progress tracking
 7. Incrementally update manifest every N files (prevents orphaned files on interruption)
 8. Upload final manifest with deleted files filtered
-9. Evict iCloud files to free disk space
+9. Upload success marker to indicate backup completed successfully
+10. Evict iCloud files to free disk space
 - Supports custom config via `--config` or `-c` flag
 - Manifest update frequency controlled by `backup.manifestUpdateInterval` (default: 50 files)
 
@@ -149,12 +159,17 @@ kodema backup
 4. Simple flat structure in B2
 - Supports custom config via `--config` or `-c` flag
 
-**`kodema cleanup [--config <path>]` (lines 1515-1666)**
+**`kodema cleanup [--config <path>]` (lines 1625-1820)**
 1. Fetch all snapshot manifests from B2
 2. Apply retention policy to select snapshots to keep
 3. Delete old snapshot manifests
-4. Find and delete orphaned file versions (not referenced by any kept snapshot)
+4. Fetch success markers and delete markers for removed snapshots
+5. Use hybrid orphan detection to find orphaned file versions:
+   - For completed backups: all files with that timestamp are valid
+   - For incomplete backups: download manifest to verify referenced files
+6. Delete orphaned file versions
 - Supports custom config via `--config` or `-c` flag
+- Performance: only downloads manifests for incomplete backups (typically 0-5% of total)
 
 **`kodema restore [options]` (lines 1995-2354)**
 1. Parse restore options (snapshot, paths, output, force, list-snapshots)

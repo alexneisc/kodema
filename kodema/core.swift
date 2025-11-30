@@ -1178,6 +1178,20 @@ func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestam
     try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
 }
 
+// Upload success marker to indicate completed backup
+func uploadSuccessMarker(client: B2Client, timestamp: String, remotePrefix: String) async throws {
+    let markerPath = "\(remotePrefix)/.success-markers/\(timestamp)"
+    let markerContent = "completed"
+    let markerData = markerContent.data(using: .utf8)!
+
+    let markerTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("success_\(timestamp).txt")
+    try markerData.write(to: markerTempURL)
+    defer { try? FileManager.default.removeItem(at: markerTempURL) }
+
+    let markerSha1 = try sha1HexStream(fileURL: markerTempURL)
+    try await client.uploadSmallFile(fileURL: markerTempURL, fileName: markerPath, contentType: "text/plain", sha1Hex: markerSha1)
+}
+
 // Build relative path from home or scan root
 func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
     let localPath = localURL.path
@@ -1702,25 +1716,85 @@ func runCleanup(config: AppConfig) async throws {
 
     print("\n  🧹 Cleaning up orphaned file versions...")
 
+    // Fetch success markers to identify completed backups
+    print("  📋 Checking backup completion status...")
+    let allSuccessMarkers = try await client.listFiles(prefix: "\(remotePrefix)/.success-markers/")
+
+    // Delete success markers for deleted snapshots
+    var deletedMarkers = 0
+    for marker in allSuccessMarkers {
+        let timestamp = marker.fileName.split(separator: "/").last.map(String.init) ?? ""
+        if toDelete.contains(where: { $0.timestamp == timestamp }) {
+            do {
+                try await client.deleteFileVersion(fileName: marker.fileName, fileId: marker.fileId)
+                deletedMarkers += 1
+            } catch {
+                print("     \(errorColor)✗ Failed to delete marker for \(timestamp): \(error)\(resetColor)")
+            }
+        }
+    }
+    if deletedMarkers > 0 {
+        print("     ✓ Deleted \(deletedMarkers) success markers")
+    }
+
+    // Build set of completed backups (excluding deleted ones)
+    let completedBackups = Set(allSuccessMarkers.compactMap { marker -> String? in
+        let timestamp = marker.fileName.split(separator: "/").last.map(String.init) ?? ""
+        // Exclude if this snapshot is being deleted
+        return toDelete.contains(where: { $0.timestamp == timestamp }) ? nil : timestamp
+    }.filter { !$0.isEmpty })
+
     // Fetch all file versions
     let allFileVersions = try await client.listFiles(prefix: "\(remotePrefix)/files/")
 
-    // Build set of version timestamps that are still referenced by kept snapshots
-    var referencedVersions = Set<String>()
+    // Build set of referenced files: (timestamp, relativePath)
+    // For completed backups: all files with that timestamp are valid
+    // For incomplete backups: only files in manifest are valid
+    var referencedFiles = Set<String>()  // Set of "timestamp:relativePath"
+
     for snapshot in snapshots where toKeep.contains(snapshot.timestamp) {
-        referencedVersions.insert(snapshot.timestamp)
+        if completedBackups.contains(snapshot.timestamp) {
+            // ✅ Completed backup - mark all files with this timestamp as referenced
+            // We'll verify against this timestamp in the loop below
+            referencedFiles.insert(snapshot.timestamp)  // Special marker for "all files valid"
+        } else {
+            // ⚠️ Incomplete backup - only files in manifest are valid
+            print("     ⚠️  Incomplete backup detected: \(snapshot.timestamp) - checking manifest...")
+            do {
+                let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
+
+                // Add only files from this specific snapshot version
+                for fileInfo in manifest.files where fileInfo.versionTimestamp == snapshot.timestamp {
+                    referencedFiles.insert("\(snapshot.timestamp):\(fileInfo.path)")
+                }
+            } catch {
+                print("     \(errorColor)✗ Failed to fetch manifest for \(snapshot.timestamp): \(error)\(resetColor)")
+                // Conservative: treat as completed to avoid deleting files
+                referencedFiles.insert(snapshot.timestamp)
+            }
+        }
     }
 
-    // Find orphaned versions (versions not in any kept snapshot)
+    // Find orphaned versions
     var orphanedVersions: [(file: B2FileInfo, versionTimestamp: String)] = []
     for file in allFileVersions {
         // Expected format: backup/files/Documents/myfile.txt/2024-11-27_143022
         let components = file.fileName.split(separator: "/")
-        guard let versionTimestamp = components.last.map(String.init) else {
-            continue
-        }
+        guard components.count >= 4 else { continue }
 
-        if !referencedVersions.contains(versionTimestamp) {
+        let versionTimestamp = components.last.map(String.init) ?? ""
+        // Extract relative path: everything between "files/" and timestamp
+        let pathComponents = components.dropFirst(2).dropLast(1)
+        let relativePath = pathComponents.joined(separator: "/")
+
+        // Check if file is referenced
+        let isCompleted = referencedFiles.contains(versionTimestamp)
+        let isInManifest = referencedFiles.contains("\(versionTimestamp):\(relativePath)")
+
+        if !isCompleted && !isInManifest {
             orphanedVersions.append((file, versionTimestamp))
         }
     }
@@ -1939,8 +2013,12 @@ func runIncrementalBackup(config: AppConfig) async throws {
     // Upload final manifest
     try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
 
+    // Upload success marker to indicate backup completed successfully
+    try await uploadSuccessMarker(client: client, timestamp: timestamp, remotePrefix: remotePrefix)
+
     await progress.printFinal()
     print("  📸 Snapshot manifest uploaded: \(remotePrefix)/snapshots/\(timestamp)/manifest.json")
+    print("  ✅ Backup completed successfully")
 }
 
 // MARK: - Mirror logic (simple upload all)
