@@ -166,6 +166,7 @@ Tests and validates your configuration before running backups. This command chec
 - 📁 **Folder checks** - Ensures folders exist and are readable
 - 📊 **Size calculation** - Counts files and calculates total size
 - ☁️ **iCloud detection** - Identifies files not yet downloaded locally
+- 💾 **Disk space check** - Verifies enough space for iCloud downloads
 - ⚙️ **Settings display** - Shows all configuration settings
 
 **Usage:**
@@ -194,6 +195,9 @@ Folders to Backup:
   ✓ ~/Documents (1,234 files, 2.3 GB)
   ✓ ~/Desktop (89 files, 456 MB)
   ⚠  iCloud: 23 files not yet downloaded locally
+
+Disk Space:
+  ✓ Available: 45.2 GB
 
 Summary:
   • Total files to scan: ~1,323 files

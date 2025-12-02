@@ -179,6 +179,24 @@ timeouts:
   icloudDownloadSeconds: 3600  # 1 hour
 ```
 
+### Not enough disk space for iCloud files
+
+Kodema checks available disk space before downloading iCloud files. If a file is too large:
+
+**What happens:**
+- Backup skips the file with a warning
+- Other files continue backing up
+- Failed file shown in final summary
+
+**Solutions:**
+1. Free up disk space before backup
+2. Run `kodema test-config` to see space requirements
+3. Exclude large files temporarily:
+   ```yaml
+   filters:
+     maxSizeBytes: 5368709120  # 5 GB limit
+   ```
+
 ### Upload timeouts
 
 Increase timeouts or reduce part size:

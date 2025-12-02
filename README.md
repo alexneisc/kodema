@@ -159,6 +159,8 @@ This command:
 - ✅ Checks if configured folders exist and are readable
 - ✅ Scans folders to show file counts and sizes
 - ✅ Detects iCloud files not yet downloaded locally
+- ✅ Checks available disk space
+- ✅ Warns if not enough space for iCloud downloads
 - ✅ Displays all configuration settings
 - ⚠️ Shows warnings for potential issues
 
@@ -178,6 +180,9 @@ B2 Connection:
 Folders to Backup:
   ✓ ~/Documents (1,234 files, 2.3 GB)
   ✓ ~/Desktop (89 files, 456 MB)
+
+Disk Space:
+  ✓ Available: 45.2 GB
 
 Summary:
   • Total files to scan: ~1,323 files

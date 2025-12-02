@@ -66,10 +66,13 @@ kodema backup
 - `checkFileStatus()`: Detects if file is local or in iCloud (not yet downloaded)
 
 **iCloud Integration (lines 295-364)**
-- `startDownloadIfNeeded()`: Triggers iCloud file download
+- `getAvailableDiskSpace()`: Checks available disk space using `volumeAvailableCapacityForImportantUsageKey`
+- Disk space validation: Before downloading iCloud files, verifies 120% of file size is available (20% buffer)
+- `startDownloadIfNeeded()`: Triggers iCloud file download if space check passes
 - `waitForICloudDownload()`: Polls until file is locally available (with timeout)
 - `evictIfUbiquitous()`: Removes local copy after upload to save disk space
 - Uses `URLResourceKey`: `.isUbiquitousItemKey`, `.ubiquitousItemDownloadingStatusKey`
+- Files skipped if insufficient disk space (marked as failed with warning)
 
 **B2 API Client (lines 686-1131)**
 - `B2Client` class handles all Backblaze API operations
@@ -152,13 +155,15 @@ kodema backup
 3. Scan configured folders and check accessibility
 4. Count files and calculate total size
 5. Detect iCloud files not yet downloaded locally
-6. Display all configuration settings (filters, retention, performance, timeouts)
-7. Show summary with total files and estimated size
+6. Check available disk space and warn if insufficient for iCloud downloads
+7. Display all configuration settings (filters, retention, performance, timeouts)
+8. Show summary with total files and estimated size
 - Supports custom config via `--config` or `-c` flag
 - No modifications made to local files or remote B2 bucket
 - Exits with error if configuration has issues (missing folders, auth failure, etc.)
-- Shows warnings for potential issues (iCloud files not downloaded)
+- Shows warnings for potential issues (iCloud files not downloaded, low disk space)
 - Useful for validating config before first backup or after making changes
+- Disk space check: requires 20% buffer above file size for safety
 
 **`kodema backup [--config <path>] [--dry-run]` (lines 1914-2124)**
 1. Scan local files and apply filters
@@ -168,6 +173,8 @@ kodema backup
 5. Sort files (local first, then iCloud)
 6. Upload initial manifest to B2 (establishes snapshot immediately)
 7. Upload changed files with progress tracking
+   - For iCloud files: checks available disk space before downloading (requires 20% buffer)
+   - Skips files if insufficient disk space with warning message
    - Checks for shutdown request before each file (graceful shutdown support)
 8. Incrementally update manifest every N files (prevents orphaned files on interruption)
 9. Upload final manifest with deleted files filtered

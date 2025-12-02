@@ -407,6 +407,24 @@ func evictIfUbiquitous(url: URL) {
     }
 }
 
+func getAvailableDiskSpace(for path: String = NSHomeDirectory()) -> Int64? {
+    do {
+        let url = URL(fileURLWithPath: path)
+        let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        if let capacity = values.volumeAvailableCapacityForImportantUsage {
+            return capacity
+        }
+        // Fallback to regular available capacity
+        let fallbackValues = try url.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        if let capacity = fallbackValues.volumeAvailableCapacity {
+            return Int64(capacity)
+        }
+        return nil
+    } catch {
+        return nil
+    }
+}
+
 func fileSize(url: URL) -> Int64? {
     do {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -2097,6 +2115,29 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
         }
     }
 
+    // 8. Disk Space
+    print("\n\(boldColor)Disk Space:\(resetColor)")
+    if let availableSpace = getAvailableDiskSpace() {
+        print("  \(localColor)✓\(resetColor) Available: \(formatBytes(availableSpace))")
+
+        // Check if enough space for iCloud files
+        if icloudNotDownloaded > 0 {
+            // Calculate space needed for largest iCloud files (estimate)
+            let estimatedNeededSpace = Int64(Double(totalBytes) * 0.3) // Assume 30% are iCloud files not yet downloaded
+            let requiredSpace = Int64(Double(estimatedNeededSpace) * 1.2) // Add 20% buffer
+
+            if availableSpace < requiredSpace {
+                print("  \(errorColor)⚠\(resetColor)  Warning: May not have enough space for iCloud downloads")
+                print("    Estimated need: \(formatBytes(requiredSpace)) (with buffer)")
+                print("    Consider freeing up disk space before backup")
+                hasWarnings = true
+            }
+        }
+    } else {
+        print("  \(errorColor)⚠\(resetColor)  Could not determine available disk space")
+        hasWarnings = true
+    }
+
     // Final summary
     print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
     if hasErrors {
@@ -2244,6 +2285,19 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
             if status == "Cloud" {
                 await progress.startFile(name: "☁️  \(url.lastPathComponent)")
                 await progress.printProgress()
+
+                // Check if enough disk space before downloading
+                let fileSize = file.size ?? 0
+                if let availableSpace = getAvailableDiskSpace(), fileSize > 0 {
+                    // Require 20% buffer for safety
+                    let requiredSpace = Int64(Double(fileSize) * 1.2)
+                    if availableSpace < requiredSpace {
+                        print("  \(errorColor)⚠️  Not enough disk space to download \(url.lastPathComponent)\(resetColor)")
+                        print("  \(errorColor)   Need: \(formatBytes(requiredSpace)) (file + 20% buffer), Available: \(formatBytes(availableSpace))\(resetColor)")
+                        await progress.fileFailed()
+                        continue
+                    }
+                }
 
                 startDownloadIfNeeded(url: url)
                 let ok = try await withTimeoutBool(TimeInterval(icloudTimeout)) {
