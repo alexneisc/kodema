@@ -156,6 +156,59 @@ kodema restore --snapshot 2024-11-27_143022 \
 
 ---
 
+### `kodema test-config` - Validate Configuration
+
+Tests and validates your configuration before running backups. This command checks your config file, tests B2 connection, scans configured folders, and shows what will be backed up.
+
+**Features:**
+- ✅ **Config validation** - Checks YAML syntax and required fields
+- 🔗 **B2 connection test** - Verifies authentication and bucket access
+- 📁 **Folder checks** - Ensures folders exist and are readable
+- 📊 **Size calculation** - Counts files and calculates total size
+- ☁️ **iCloud detection** - Identifies files not yet downloaded locally
+- ⚙️ **Settings display** - Shows all configuration settings
+
+**Usage:**
+```bash
+# Use default config (~/.config/kodema/config.yml)
+kodema test-config
+
+# Use custom config
+kodema test-config --config ~/my-config.yml
+```
+
+**Example output:**
+```
+Testing Kodema Configuration
+═══════════════════════════════════════════════════════════════
+
+Configuration File:
+  ✓ Config loaded: ~/.config/kodema/config.yml
+
+B2 Connection:
+  ✓ Authentication successful (key: ***0002)
+  ✓ Bucket found: my-backup-bucket (id: 761c061262bca...)
+  ✓ API access verified
+
+Folders to Backup:
+  ✓ ~/Documents (1,234 files, 2.3 GB)
+  ✓ ~/Desktop (89 files, 456 MB)
+  ⚠  iCloud: 23 files not yet downloaded locally
+
+Summary:
+  • Total files to scan: ~1,323 files
+  • Estimated size: ~2.7 GB
+  • iCloud files may need download during backup
+```
+
+**When to use:**
+- Before your first backup
+- After changing configuration
+- When troubleshooting backup issues
+- To verify B2 credentials
+
+---
+
 ### `kodema list` - Discover iCloud Folders
 
 Lists all iCloud Drive folders and their contents to help you configure which folders to backup.
@@ -323,17 +376,23 @@ kodema list
 ```
 Review what's in your iCloud Drive before configuring.
 
-### 2. Test with Small Folder First
+### 2. Validate Configuration
+```bash
+kodema test-config
+```
+Always validate your config before running first backup. This catches configuration errors early and shows what will be backed up.
+
+### 3. Test with Small Folder First
 ```yaml
 include:
   folders:
     - ~/Documents/test-folder
 ```
 
-### 3. Monitor First Backup
+### 4. Monitor First Backup
 The first incremental backup will upload everything (like a mirror). Subsequent backups will be much faster.
 
-### 4. Set Reasonable Retention
+### 5. Set Reasonable Retention
 ```yaml
 backup:
   retention:
@@ -344,7 +403,7 @@ backup:
 ```
 Adjust based on your needs and B2 storage costs.
 
-### 5. Use Filters to Exclude Junk
+### 6. Use Filters to Exclude Junk
 ```yaml
 filters:
   excludeGlobs:
@@ -354,13 +413,13 @@ filters:
     - "**/.git/**"
 ```
 
-### 6. Schedule Regular Backups
+### 7. Schedule Regular Backups
 ```bash
 # Add to crontab for daily backups at 2 AM
 0 2 * * * /usr/local/bin/kodema backup
 ```
 
-### 7. Run Cleanup Regularly
+### 8. Run Cleanup Regularly
 ```bash
 # Weekly cleanup on Sundays at 3 AM
 0 3 * * 0 /usr/local/bin/kodema cleanup

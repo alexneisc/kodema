@@ -1,16 +1,37 @@
 # Frequently Asked Questions (FAQ)
 
-Common questions about Kodema backup tool.
+Quick answers to common questions about Kodema. For detailed guides, see [BACKUP_GUIDE.md](BACKUP_GUIDE.md).
 
-## General Questions
+## Quick Start
 
-### What is Kodema?
+### How do I install Kodema?
 
-Kodema is a backup tool for macOS that backs up your iCloud Drive and local files to Backblaze B2 cloud storage. It features incremental backups with versioning, Time Machine-style retention, and automatic cleanup.
+See [README.md - Quick Start](README.md#quick-start) for installation instructions.
 
-### Is it free?
+### Where do I get B2 credentials?
 
-Yes! Kodema is open source (MIT License) and free to use. You only pay for Backblaze B2 storage.
+1. Sign up: https://www.backblaze.com/b2/sign-up.html
+2. Create bucket and application key
+3. Copy Key ID and Application Key to `~/.config/kodema/config.yml`
+
+### How do I validate my configuration?
+
+```bash
+kodema test-config
+```
+
+This checks your config, tests B2 connection, and shows what will be backed up. Always run this before your first backup!
+
+### Where is the config file?
+
+Default: `~/.config/kodema/config.yml`
+
+Or specify custom path:
+```bash
+kodema backup --config ~/my-config.yml
+```
+
+## Backup & Restore
 
 ### What's the difference between backup and mirror?
 
@@ -21,48 +42,9 @@ Yes! Kodema is open source (MIT License) and free to use. You only pay for Backb
 | Storage | More (versions) | Less (latest only) |
 | Recovery | Point-in-time | Latest only |
 
-**TL;DR**: Use `backup` for important stuff, `mirror` for static files.
+**TL;DR**: Use `backup` for important data with version history, `mirror` for simple syncing.
 
-## Installation & Setup
-
-### How do I install Kodema?
-
-```bash
-# 1. Install Swift
-xcode-select --install
-
-# 2. Build Kodema
-cd kodema && make release
-
-# 3. Install to /usr/local/bin
-make install
-```
-
-### Where do I get B2 credentials?
-
-1. Sign up: https://www.backblaze.com/b2/sign-up.html
-2. Create bucket
-3. Create application key: https://secure.backblaze.com/app_keys.htm
-4. Copy Key ID and Application Key to config
-
-### Where is the config file?
-
-Default location: `~/.config/kodema/config.yml`
-
-Or specify custom path:
-```bash
-kodema backup --config ~/my-config.yml
-```
-
-### Do I need iCloud Drive?
-
-No! Kodema works with:
-- ✅ iCloud Drive folders (auto-downloads if needed)
-- ✅ Local folders (~/Documents, ~/Desktop, etc.)
-- ✅ External drives
-- ✅ Any accessible folder
-
-## Usage Questions
+See [BACKUP_GUIDE.md - Choosing Between Backup and Mirror](BACKUP_GUIDE.md#choosing-between-backup-and-mirror) for details.
 
 ### How do I backup my files?
 
@@ -74,12 +56,12 @@ kodema backup
 kodema mirror
 ```
 
+See [BACKUP_GUIDE.md - Commands](BACKUP_GUIDE.md#commands) for full documentation.
+
 ### How do I restore files?
 
-Use the `kodema restore` command:
-
 ```bash
-# Interactive selection - shows list of snapshots
+# Interactive selection
 kodema restore
 
 # Restore specific snapshot
@@ -88,53 +70,21 @@ kodema restore --snapshot 2024-11-27_143022
 # Restore specific file
 kodema restore --path Documents/myfile.txt
 
-# Restore to custom location
-kodema restore --output ~/restored-files/
-
 # List available snapshots
 kodema restore --list-snapshots
 ```
 
-See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for more examples.
-
-### How do I schedule automatic backups?
-
-Using cron:
-```bash
-crontab -e
-
-# Add these lines:
-0 2 * * * /usr/local/bin/kodema backup >> /var/log/kodema.log 2>&1
-0 3 * * 0 /usr/local/bin/kodema cleanup >> /var/log/kodema-cleanup.log 2>&1
-```
-
-### How often should I run cleanup?
-
-Weekly is usually good:
-```bash
-# Every Sunday at 3 AM
-0 3 * * 0 /usr/local/bin/kodema cleanup
-```
-
-But it depends on your retention policy and how often files change.
+See [BACKUP_GUIDE.md - Restore](BACKUP_GUIDE.md#kodema-restore---restore-files-from-backup) for all options.
 
 ### Can I pause a backup?
 
-Yes! Press `Ctrl+C` to stop. Just run `kodema backup` again to resume (it will skip already-uploaded files).
+Yes! Press `Ctrl+C`. The backup will finish the current file and save progress. Run `kodema backup` again to resume.
 
-## Configuration Questions
+See [CLAUDE.md - Graceful Shutdown](CLAUDE.md#graceful-shutdown) for technical details.
+
+## Configuration
 
 ### What's a good retention policy?
-
-**Conservative** (keeps more, costs more):
-```yaml
-backup:
-  retention:
-    hourly: 48     # 2 days
-    daily: 90      # 3 months
-    weekly: 52     # 1 year
-    monthly: 24    # 2 years
-```
 
 **Balanced** (recommended):
 ```yaml
@@ -146,180 +96,79 @@ backup:
     monthly: 12    # 1 year
 ```
 
-**Aggressive** (saves money):
-```yaml
-backup:
-  retention:
-    hourly: 6      # 6 hours
-    daily: 7       # 1 week
-    weekly: 4      # 1 month
-    monthly: 6     # 6 months
-```
+See [BACKUP_GUIDE.md - Retention Policy](BACKUP_GUIDE.md#retention-policy-explained) for other examples.
 
 ### How do I exclude certain files?
 
 ```yaml
 filters:
   excludeGlobs:
-    - "*.tmp"                # Temp files
-    - "**/.DS_Store"         # macOS metadata
-    - "**/node_modules/**"   # Dependencies
-    - "**/.git/**"           # Git repos
-    - "*.cache"              # Cache files
+    - "*.tmp"
+    - "**/.DS_Store"
+    - "**/node_modules/**"
+    - "**/.git/**"
 ```
 
-See [config.example.yml](config.example.yml) for more patterns.
-
-### Can I backup external drives?
-
-Yes! Add them to your config:
-```yaml
-include:
-  folders:
-    - /Volumes/MyExternalDrive/Important
-```
+See [BACKUP_GUIDE.md - Configuration](BACKUP_GUIDE.md#configuration) for full config examples.
 
 ### Can I use multiple configs?
 
-Yes! Specify path with --config flag:
+Yes! Use the `--config` flag:
 ```bash
-kodema backup --config ~/configs/work.yml
-kodema backup --config ~/configs/personal.yml
+kodema backup --config ~/.config/kodema/work.yml
+kodema backup --config ~/.config/kodema/personal.yml
 ```
 
-## Technical Questions
+### Do I need iCloud Drive?
 
-### How does change detection work?
+No! Kodema works with:
+- ✅ iCloud Drive folders (auto-downloads if needed)
+- ✅ Local folders (~/Documents, ~/Desktop, etc.)
+- ✅ External drives
+- ✅ Any accessible folder
 
-Kodema compares:
-1. File size
-2. Modification time (mtime)
+## Scheduling & Automation
 
-If either changed, the file is uploaded. This is fast and reliable for most use cases.
+### How do I schedule automatic backups?
 
-### Does it support encryption?
-
-Not yet. B2 has server-side encryption, but client-side encryption is on the roadmap. See [TODO.md](TODO.md).
-
-### Can I backup to multiple destinations?
-
-Not directly, but you can:
-1. Use different configs with different buckets
-2. Run multiple commands sequentially
-
-### What happens if upload fails?
-
-Kodema will:
-1. Retry with exponential backoff (default: 3 times)
-2. Mark file as failed
-3. Continue with other files
-4. Show failed count at end
-
-Just run `kodema backup` again to retry failed files.
-
-### How much bandwidth does it use?
-
-First backup: Uploads everything (can be large)  
-Subsequent backups: Only changed files (minimal)
-
-You can limit bandwidth by adjusting `partSizeMB`:
-```yaml
-b2:
-  partSizeMB: 50  # Smaller = less burst bandwidth
-```
-
-### Does it work offline?
-
-No - Kodema needs internet to upload to B2.
-
-## Restore Questions
-
-### How do I see which snapshots are available?
-
+**Using cron:**
 ```bash
-# List all snapshots
-kodema restore --list-snapshots
+crontab -e
 
-# List only snapshots containing specific files
-kodema restore --path folder1 --list-snapshots
+# Add these lines:
+0 2 * * * /usr/local/bin/kodema backup >> /var/log/kodema.log 2>&1
+0 3 * * 0 /usr/local/bin/kodema cleanup >> /var/log/kodema-cleanup.log 2>&1
 ```
 
-This shows snapshots with dates, file counts, and sizes. When using `--path`, only snapshots containing those files are shown.
+See [README.md - Scheduling](README.md#scheduling-automatic-backups) for launchd setup.
 
-### Can I restore just one file?
+### How often should I run cleanup?
 
-Yes! Use the `--path` flag:
-
+Weekly is usually good:
 ```bash
-kodema restore --path Documents/myfile.txt
+# Every Sunday at 3 AM
+0 3 * * 0 /usr/local/bin/kodema cleanup
 ```
 
-You can also restore entire folders:
-```bash
-kodema restore --path Documents/Photos/
-kodema restore --path folder1  # Works with or without trailing slash
-```
-
-Path filtering is flexible and matches:
-- Exact file/folder names: `folder1` matches `folder1/file.txt`
-- Directory components: `folder1` matches `Documents/folder1/file.txt`
-- Multiple paths: `--path file1.txt --path folder2/`
-
-### Will restore overwrite my current files?
-
-By default, Kodema asks for confirmation before overwriting. You'll see:
-- List of files that will be overwritten
-- Options to proceed or cancel
-
-Use `--force` to skip confirmation:
-```bash
-kodema restore --snapshot 2024-11-27_143022 --force
-```
-
-### Can I restore to a different location?
-
-Yes! Use `--output`:
-
-```bash
-kodema restore --output ~/restored-files/
-```
-
-This preserves the original directory structure within the output folder.
-
-### How do I restore to a specific date?
-
-First, list available snapshots:
-```bash
-kodema restore --list-snapshots
-```
-
-Then restore that snapshot:
-```bash
-kodema restore --snapshot 2024-11-27_143022
-```
-
-### What if restore fails partway through?
-
-Kodema continues on errors and shows failed count at the end. Just run the restore again - it will:
-- Detect already-restored files (if using `--force`)
-- Or prompt you to overwrite (without `--force`)
-
-### Does restore preserve file timestamps?
-
-Yes! Kodema restores the original modification dates from when files were backed up.
+Depends on your retention policy and how often files change.
 
 ## Troubleshooting
 
+### Configuration validation fails
+
+Run `kodema test-config` to see specific errors:
+- Check B2 credentials are correct
+- Verify bucket name matches exactly
+- Ensure configured folders exist
+
 ### "Bucket not found" error
 
-Check:
 - ✅ Bucket name matches exactly (case-sensitive)
 - ✅ B2 key has access to bucket
 - ✅ Bucket exists in correct B2 account
 
 ### iCloud files won't download
 
-Check:
 - ✅ iCloud Drive enabled in System Settings
 - ✅ Enough local disk space
 - ✅ Internet connection stable
@@ -332,17 +181,14 @@ timeouts:
 
 ### Upload timeouts
 
-Increase timeouts:
+Increase timeouts or reduce part size:
 ```yaml
 timeouts:
   networkSeconds: 600         # 10 minutes
   overallUploadSeconds: 14400 # 4 hours
-```
 
-Or reduce part size:
-```yaml
 b2:
-  partSizeMB: 50  # Default: 100
+  partSizeMB: 50  # Smaller parts (default: 100)
 ```
 
 ### "Permission denied" errors
@@ -354,35 +200,41 @@ ls -la ~/Documents
 
 Kodema needs read access to backup files.
 
-### Cleanup deletes too much
+### Restore overwrites existing files
 
-Test retention policy first:
-```yaml
-backup:
-  retention:
-    hourly: 48   # Increase these
-    daily: 60
-    weekly: 24
-    monthly: 24
+By default, Kodema asks for confirmation. Use `--force` to skip:
+```bash
+kodema restore --snapshot 2024-11-27_143022 --force
 ```
 
-Always review what will be deleted before confirming cleanup.
+Or restore to different location:
+```bash
+kodema restore --output ~/restored-files/
+```
 
-### Out of memory errors
+## Technical Questions
 
-Kodema streams large files, but if you hit memory limits:
+### How does change detection work?
 
-1. Reduce `partSizeMB`:
-   ```yaml
-   b2:
-     partSizeMB: 50
-   ```
+Kodema compares:
+1. File size
+2. Modification time (mtime)
 
-2. Close other apps
+If either changed, the file is uploaded. Fast and reliable for most use cases.
 
-3. Check for very large files (>10 GB)
+### Does it support encryption?
 
-## Advanced Questions
+B2 has server-side encryption. Client-side encryption is planned for future releases.
+
+### What happens if upload fails?
+
+Kodema will:
+1. Retry with exponential backoff (default: 3 times)
+2. Mark file as failed
+3. Continue with other files
+4. Show failed count at end
+
+Run `kodema backup` again to retry failed files.
 
 ### Can I run multiple backups simultaneously?
 
@@ -391,27 +243,33 @@ Not recommended - could cause conflicts. Use sequential runs:
 kodema backup --config work.yml && kodema backup --config personal.yml
 ```
 
-### Can I backup to multiple clouds?
+### Does restore preserve file timestamps?
 
-Not directly. Planned for future.
+Yes! Kodema restores original modification dates from when files were backed up.
 
-Workaround: Use different configs pointing to different buckets.
+## About
 
-### Can I use it commercially?
+### What is Kodema?
 
-Yes! MIT License allows commercial use.
+Kodema is an open source backup tool for macOS that backs up iCloud Drive and local files to Backblaze B2 cloud storage with incremental backups, versioning, and Time Machine-style retention.
+
+### Is it free?
+
+Yes! Kodema is open source (MIT License). You only pay for Backblaze B2 storage (very affordable).
 
 ### Is my data private?
 
 Yes! Your data:
-- ✅ Never shared with third parties
 - ✅ Stored in your own B2 account
 - ✅ Only you have access
+- ✅ Not shared with anyone
 
-**Note**: B2 has server-side encryption, but client-side encryption is planned for extra security.
+**Note**: B2 has server-side encryption. Client-side encryption planned for future.
 
-## Get Help
+## Need More Help?
 
-1. **Search this FAQ** - Your question might be answered
-2. **Search GitHub Issues** - Someone may have asked already
-3. **Open new issue** - If problem persists
+- **Detailed guides**: [BACKUP_GUIDE.md](BACKUP_GUIDE.md)
+- **Technical docs**: [CLAUDE.md](CLAUDE.md)
+- **Quick start**: [README.md](README.md)
+- **Command help**: Run `kodema help`
+- **Issues**: https://github.com/alexneisc/kodema/issues
