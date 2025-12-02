@@ -146,6 +146,20 @@ kodema backup
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
+**`kodema test-config [--config <path>]`**
+1. Load and validate YAML configuration file
+2. Test B2 authentication and bucket access
+3. Scan configured folders and check accessibility
+4. Count files and calculate total size
+5. Detect iCloud files not yet downloaded locally
+6. Display all configuration settings (filters, retention, performance, timeouts)
+7. Show summary with total files and estimated size
+- Supports custom config via `--config` or `-c` flag
+- No modifications made to local files or remote B2 bucket
+- Exits with error if configuration has issues (missing folders, auth failure, etc.)
+- Shows warnings for potential issues (iCloud files not downloaded)
+- Useful for validating config before first backup or after making changes
+
 **`kodema backup [--config <path>] [--dry-run]` (lines 1914-2124)**
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)

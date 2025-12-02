@@ -308,11 +308,17 @@ enum TimeoutError: Error {
 
 enum ConfigError: Error, CustomStringConvertible {
     case missingFolders
+    case noFoldersConfigured
+    case validationFailed
 
     var description: String {
         switch self {
         case .missingFolders:
             return "No folders configured. Please specify folders to backup in config.yml under 'include.folders'"
+        case .noFoldersConfigured:
+            return "No folders configured in include.folders"
+        case .validationFailed:
+            return "Configuration validation failed"
         }
     }
 }
@@ -1334,13 +1340,14 @@ func printHelp() {
     print("\nUsage:")
     print("  kodema <command> [options]")
     print("\nCommands:")
-    print("  \(boldColor)backup\(resetColor)     Incremental backup with snapshots and versioning")
-    print("  \(boldColor)mirror\(resetColor)     Simple mirroring (uploads all files)")
-    print("  \(boldColor)cleanup\(resetColor)    Clean up old backup versions per retention policy")
-    print("  \(boldColor)restore\(resetColor)    Restore files from backup snapshots")
-    print("  \(boldColor)list\(resetColor)       List all folders in iCloud Drive")
-    print("  \(boldColor)version\(resetColor)    Show version information")
-    print("  \(boldColor)help\(resetColor)       Show this help message")
+    print("  \(boldColor)backup\(resetColor)       Incremental backup with snapshots and versioning")
+    print("  \(boldColor)mirror\(resetColor)       Simple mirroring (uploads all files)")
+    print("  \(boldColor)cleanup\(resetColor)      Clean up old backup versions per retention policy")
+    print("  \(boldColor)restore\(resetColor)      Restore files from backup snapshots")
+    print("  \(boldColor)test-config\(resetColor)  Validate configuration without uploading")
+    print("  \(boldColor)list\(resetColor)         List all folders in iCloud Drive")
+    print("  \(boldColor)version\(resetColor)      Show version information")
+    print("  \(boldColor)help\(resetColor)         Show this help message")
     print("\nOptions:")
     print("  \(boldColor)--config\(resetColor), \(boldColor)-c\(resetColor) <path>         Specify custom config file path")
     print("  \(boldColor)--dry-run\(resetColor), \(boldColor)-n\(resetColor)               Preview changes without making them")
@@ -1350,6 +1357,7 @@ func printHelp() {
     print("  \(boldColor)--force\(resetColor)                  Skip overwrite confirmation (for restore)")
     print("  \(boldColor)--list-snapshots\(resetColor)        List available snapshots (for restore)")
     print("\nExamples:")
+    print("  kodema test-config                         Validate config and test B2 connection")
     print("  kodema backup                              Incremental backup with default config")
     print("  kodema backup --dry-run                    Preview what would be backed up")
     print("  kodema mirror --config ~/my-config.yml     Simple mirror with custom config")
@@ -1898,6 +1906,217 @@ func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
     print("  🧹 \(dryRun ? "Would clean up" : "Cleaned up") orphaned file versions")
     print("  ✅ Retained \(toKeep.count) snapshots")
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+}
+
+// MARK: - Config validation and testing
+
+func testConfig(config: AppConfig, configURL: URL) async throws {
+    print("\n\(boldColor)Testing Kodema Configuration\(resetColor)")
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+
+    var hasErrors = false
+    var hasWarnings = false
+
+    // 1. Config file validation
+    print("\(boldColor)Configuration File:\(resetColor)")
+    print("  \(localColor)✓\(resetColor) Config loaded: \(configURL.path)")
+
+    // 2. B2 Connection Test
+    print("\n\(boldColor)B2 Connection:\(resetColor)")
+    do {
+        let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
+        let maxRetries = config.b2.maxRetries ?? 3
+        let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
+
+        // Test authentication
+        do {
+            try await client.ensureAuthorized()
+            let maskedKey = String(config.b2.keyID.suffix(4))
+            print("  \(localColor)✓\(resetColor) Authentication successful (key: ***\(maskedKey))")
+        } catch {
+            print("  \(errorColor)✗ Authentication failed: \(error)\(resetColor)")
+            hasErrors = true
+        }
+
+        // Test bucket access
+        do {
+            let bucketId = try await client.ensureBucketId()
+            print("  \(localColor)✓\(resetColor) Bucket found: \(config.b2.bucketName) (id: \(bucketId))")
+
+            // Test API access with a simple list operation
+            _ = try await client.listFiles(prefix: "", maxFileCount: 1)
+            print("  \(localColor)✓\(resetColor) API access verified")
+        } catch {
+            print("  \(errorColor)✗ Bucket access failed: \(error)\(resetColor)")
+            hasErrors = true
+        }
+    }
+
+    // 3. Folders validation
+    print("\n\(boldColor)Folders to Backup:\(resetColor)")
+
+    guard let folders = config.include?.folders, !folders.isEmpty else {
+        print("  \(errorColor)✗ No folders configured\(resetColor)")
+        print("    Add folders to config under 'include.folders'")
+        hasErrors = true
+
+        print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+        print("\(errorColor)Configuration has errors - please fix them before running backup\(resetColor)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+        throw ConfigError.noFoldersConfigured
+    }
+
+    let fm = FileManager.default
+    var totalFiles = 0
+    var totalBytes: Int64 = 0
+    var icloudNotDownloaded = 0
+
+    for folder in folders {
+        let expandedPath = NSString(string: folder).expandingTildeInPath
+        let folderURL = URL(fileURLWithPath: expandedPath)
+
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: folderURL.path, isDirectory: &isDir) && isDir.boolValue {
+            // Quick scan to get file count and size
+            var folderFiles = 0
+            var folderBytes: Int64 = 0
+            var folderICloudNotDownloaded = 0
+
+            // Use a synchronous approach for file enumeration
+            let scanResult: (Int, Int64, Int) = {
+                var files = 0
+                var bytes: Int64 = 0
+                var notDownloaded = 0
+
+                guard let enumerator = fm.enumerator(
+                    at: folderURL,
+                    includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey],
+                    options: [.skipsHiddenFiles]
+                ) else {
+                    return (0, 0, 0)
+                }
+
+                for case let fileURL as URL in enumerator {
+                    if let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+                       let isFile = resourceValues.isRegularFile,
+                       isFile {
+                        files += 1
+                        if let size = resourceValues.fileSize {
+                            bytes += Int64(size)
+                        }
+
+                        // Check iCloud status
+                        if let isUbiquitous = resourceValues.isUbiquitousItem, isUbiquitous {
+                            if let downloadStatus = resourceValues.ubiquitousItemDownloadingStatus {
+                                if downloadStatus != URLUbiquitousItemDownloadingStatus.current {
+                                    notDownloaded += 1
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return (files, bytes, notDownloaded)
+            }()
+
+            folderFiles = scanResult.0
+            folderBytes = scanResult.1
+            folderICloudNotDownloaded = scanResult.2
+
+            totalFiles += folderFiles
+            totalBytes += folderBytes
+            icloudNotDownloaded += folderICloudNotDownloaded
+
+            print("  \(localColor)✓\(resetColor) \(folder) (\(folderFiles) files, \(formatBytes(folderBytes)))")
+        } else {
+            print("  \(errorColor)✗ \(folder) - folder does not exist\(resetColor)")
+            print("    Remove this folder from config or create it")
+            hasErrors = true
+        }
+    }
+
+    if icloudNotDownloaded > 0 {
+        print("  \(errorColor)⚠\(resetColor)  iCloud: \(icloudNotDownloaded) files not yet downloaded locally")
+        print("    These will be downloaded automatically during backup")
+        hasWarnings = true
+    }
+
+    // 4. Filters validation
+    if let filters = config.filters {
+        print("\n\(boldColor)Filters:\(resetColor)")
+
+        if let excludeHidden = filters.excludeHidden, excludeHidden {
+            print("  \(localColor)✓\(resetColor) Exclude hidden files: enabled")
+        }
+
+        if let minSize = filters.minSizeBytes, minSize > 0 {
+            print("  \(localColor)✓\(resetColor) Minimum file size: \(formatBytes(Int64(minSize)))")
+        }
+
+        if let maxSize = filters.maxSizeBytes, maxSize > 0 {
+            print("  \(localColor)✓\(resetColor) Maximum file size: \(formatBytes(Int64(maxSize)))")
+        }
+
+        if let globs = filters.excludeGlobs, !globs.isEmpty {
+            print("  \(localColor)✓\(resetColor) Exclude patterns: \(globs.count) patterns")
+            print("    Examples: \(globs.prefix(3).joined(separator: ", "))")
+        }
+    }
+
+    // 5. Retention policy
+    if let retention = config.backup?.retention {
+        print("\n\(boldColor)Retention Policy:\(resetColor)")
+        print("  \(localColor)✓\(resetColor) Hourly: \(retention.hourly ?? 24) snapshots")
+        print("  \(localColor)✓\(resetColor) Daily: \(retention.daily ?? 30) snapshots")
+        print("  \(localColor)✓\(resetColor) Weekly: \(retention.weekly ?? 12) snapshots")
+        print("  \(localColor)✓\(resetColor) Monthly: \(retention.monthly ?? 12) snapshots")
+    }
+
+    // 6. Performance settings
+    print("\n\(boldColor)Performance Settings:\(resetColor)")
+    let partSizeMB = config.b2.partSizeMB ?? 100
+    print("  \(localColor)✓\(resetColor) Part size: \(partSizeMB) MB")
+
+    let uploadConcurrency = config.b2.uploadConcurrency ?? 1
+    print("  \(localColor)✓\(resetColor) Upload concurrency: \(uploadConcurrency)")
+
+    let manifestInterval = config.backup?.manifestUpdateInterval ?? 50
+    print("  \(localColor)✓\(resetColor) Manifest update interval: \(manifestInterval) files")
+
+    // 7. Timeouts
+    if let timeouts = config.timeouts {
+        print("\n\(boldColor)Timeouts:\(resetColor)")
+        if let icloudTimeout = timeouts.icloudDownloadSeconds {
+            print("  \(localColor)✓\(resetColor) iCloud download: \(icloudTimeout)s")
+        }
+        if let networkTimeout = timeouts.networkSeconds {
+            print("  \(localColor)✓\(resetColor) Network requests: \(networkTimeout)s")
+        }
+        if let uploadTimeout = timeouts.overallUploadSeconds {
+            print("  \(localColor)✓\(resetColor) Overall upload: \(uploadTimeout)s")
+        }
+    }
+
+    // Final summary
+    print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+    if hasErrors {
+        print("\(errorColor)Configuration has errors - please fix them before running backup\(resetColor)")
+        print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+        throw ConfigError.validationFailed
+    } else if hasWarnings {
+        print("\(errorColor)⚠\(resetColor)  \(boldColor)Configuration is valid with warnings\(resetColor)")
+    } else {
+        print("\(localColor)✓ Configuration is valid and ready for backup!\(resetColor)")
+    }
+    print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
+
+    print("\n\(boldColor)Summary:\(resetColor)")
+    print("  • Total files to scan: ~\(totalFiles) files")
+    print("  • Estimated size: ~\(formatBytes(totalBytes))")
+    if icloudNotDownloaded > 0 {
+        print("  • iCloud files may need download during backup")
+    }
+    print("")
 }
 
 // MARK: - Main backup logic (incremental with snapshots)
@@ -2697,6 +2916,17 @@ struct Runner {
 
         case "list":
             listICloudFolders()
+            return
+
+        case "test-config":
+            do {
+                let configURL = readConfigURL(from: args)
+                let config = try loadConfig(from: configURL)
+                try await testConfig(config: config, configURL: configURL)
+            } catch {
+                print("\n\(errorColor)Fatal error:\(resetColor) \(error)")
+                exit(1)
+            }
             return
 
         case "backup":

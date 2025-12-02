@@ -115,7 +115,15 @@ mirror:
 
 Get your B2 credentials from: https://www.backblaze.com/b2/cloud-storage.html
 
-### 4. Run Your First Backup
+### 4. Validate Configuration
+
+```bash
+kodema test-config
+```
+
+This validates your config file, tests B2 connection, and shows what will be backed up.
+
+### 5. Run Your First Backup
 
 ```bash
 # Incremental backup with versioning
@@ -129,12 +137,52 @@ kodema mirror
 
 | Command | Description |
 |---------|-------------|
+| `kodema test-config` | Validate configuration and test B2 connection |
 | `kodema backup` | Incremental backup with snapshots |
 | `kodema mirror` | Simple mirror (upload all files) |
 | `kodema cleanup` | Clean up old versions per retention policy |
 | `kodema restore` | Restore files from backup snapshots |
 | `kodema list` | Discover iCloud folders |
 | `kodema help` | Show help message |
+
+### Configuration Testing
+
+Before running your first backup, validate your configuration:
+
+```bash
+kodema test-config
+```
+
+This command:
+- ✅ Validates YAML syntax and required fields
+- ✅ Tests B2 authentication and bucket access
+- ✅ Checks if configured folders exist and are readable
+- ✅ Scans folders to show file counts and sizes
+- ✅ Detects iCloud files not yet downloaded locally
+- ✅ Displays all configuration settings
+- ⚠️ Shows warnings for potential issues
+
+**Example output:**
+```
+Testing Kodema Configuration
+═══════════════════════════════════════════════════════════════
+
+Configuration File:
+  ✓ Config loaded: ~/.config/kodema/config.yml
+
+B2 Connection:
+  ✓ Authentication successful (key: ***0002)
+  ✓ Bucket found: my-backup-bucket (id: 761c061262bca...)
+  ✓ API access verified
+
+Folders to Backup:
+  ✓ ~/Documents (1,234 files, 2.3 GB)
+  ✓ ~/Desktop (89 files, 456 MB)
+
+Summary:
+  • Total files to scan: ~1,323 files
+  • Estimated size: ~2.7 GB
+```
 
 ### Dry Run Mode
 
