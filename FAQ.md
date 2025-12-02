@@ -254,6 +254,25 @@ Kodema will:
 
 Run `kodema backup` again to retry failed files.
 
+### What happens if I hit B2 rate limits?
+
+Kodema automatically handles B2 rate limits (429 errors):
+- Detects rate limit responses from B2
+- Waits with exponential backoff (1s, 2s, 4s)
+- Retries automatically after waiting
+- Shows warning message during wait
+- Continues backup after rate limit clears
+
+**Example:**
+```
+⚠️  Rate limit reached, waiting 2s before retry...
+```
+
+You can reduce rate limit hits by:
+- Lowering `uploadConcurrency` (default: 1)
+- Using smaller `partSizeMB` for fewer API calls
+- Spreading backups across different times
+
 ### Can I run multiple backups simultaneously?
 
 Not recommended - could cause conflicts. Use sequential runs:

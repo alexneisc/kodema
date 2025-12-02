@@ -621,6 +621,7 @@ func sha1HexStream(fileURL: URL, bufferSize: Int = 8 * 1024 * 1024) throws -> St
 enum B2Error: Error, CustomStringConvertible {
     case unauthorized(String)
     case expiredUploadUrl(String)
+    case rateLimited(Int?, String)  // 429 Too Many Requests with optional retry-after seconds
     case temporary(Int, String)
     case client(Int, String)
     case invalidResponse(String)
@@ -630,6 +631,12 @@ enum B2Error: Error, CustomStringConvertible {
         switch self {
         case .unauthorized(let m): return "Unauthorized: \(m)"
         case .expiredUploadUrl(let m): return "Expired Upload URL: \(m)"
+        case .rateLimited(let retryAfter, let m):
+            if let after = retryAfter {
+                return "Rate Limited (retry after \(after)s): \(m)"
+            } else {
+                return "Rate Limited: \(m)"
+            }
         case .temporary(let code, let m): return "Temporary \(code): \(m)"
         case .client(let code, let m): return "Client \(code): \(m)"
         case .invalidResponse(let m): return "Invalid Response: \(m)"
@@ -648,6 +655,9 @@ func mapHTTPErrorToB2(_ error: Error) -> B2Error {
             } else {
                 return .unauthorized(body)
             }
+        } else if code == 429 {
+            // Rate limit exceeded - B2 returns 429 when API limits are hit
+            return .rateLimited(nil, body)
         } else if (500...599).contains(code) {
             return .temporary(code, body)
         } else if (400...499).contains(code) {
@@ -936,8 +946,15 @@ final class B2Client {
                 lastError = mapped
                 switch mapped {
                 case .expiredUploadUrl:
+                    // Expired upload URL - retry immediately with new URL
                     break
+                case .rateLimited(let retryAfter, _):
+                    // Rate limit hit - wait with exponential backoff
+                    let waitSeconds = retryAfter ?? Int(pow(2.0, Double(attempt)))
+                    print("  \(errorColor)⚠️  Rate limit reached, waiting \(waitSeconds)s before retry...\(resetColor)")
+                    try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
                 case .temporary:
+                    // Temporary server error - exponential backoff
                     try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * pow(2.0, Double(attempt))))
                 default:
                     if attempt == maxRetries { throw mapped }
@@ -997,8 +1014,15 @@ final class B2Client {
                     lastError = mapped
                     switch mapped {
                     case .expiredUploadUrl:
+                        // Expired upload URL - retry immediately with new URL
                         break
+                    case .rateLimited(let retryAfter, _):
+                        // Rate limit hit - wait with exponential backoff
+                        let waitSeconds = retryAfter ?? Int(pow(2.0, Double(attempt)))
+                        print("  \(errorColor)⚠️  Rate limit reached, waiting \(waitSeconds)s before retry (part \(partNumber))...\(resetColor)")
+                        try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
                     case .temporary:
+                        // Temporary server error - exponential backoff
                         try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * pow(2.0, Double(attempt))))
                     default:
                         if attempt == maxRetries { throw mapped }

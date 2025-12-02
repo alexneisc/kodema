@@ -85,7 +85,12 @@ kodema backup
 - **Download strategies:**
   - `downloadFile()`: Loads entire file into RAM (use for small files like manifests ~500KB)
   - `downloadFileStreaming()`: Streams directly to disk (efficient for large files, constant RAM usage)
-- Retry logic: Handles expired upload URLs, temporary errors (5xx), exponential backoff
+- **Retry logic with intelligent error handling:**
+  - Expired upload URLs (401): Retry immediately with new URL
+  - Rate limits (429): Exponential backoff (1s, 2s, 4s) with visible warning
+  - Temporary errors (5xx): Exponential backoff
+  - Client errors (4xx except 401/429): Fail immediately
+  - Max retries: 3 (configurable via `b2.maxRetries`)
 
 **Versioning & Snapshots (lines 70-86, 1066-1193)**
 - `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
@@ -259,9 +264,11 @@ kodema backup
 - Timeout wrappers (`withTimeoutVoid`, `withTimeoutDataResponse`) - currently no-ops but structured for future timeout enforcement
 
 **Error Handling Strategy**
-- B2 errors mapped to `B2Error` enum: `.unauthorized`, `.expiredUploadUrl`, `.temporary`, `.client`
-- Upload URL expiration handled transparently with retry
-- 5xx errors trigger exponential backoff
+- B2 errors mapped to `B2Error` enum: `.unauthorized`, `.expiredUploadUrl`, `.rateLimited`, `.temporary`, `.client`
+- Upload URL expiration (401) handled transparently with immediate retry
+- Rate limits (429) trigger exponential backoff with user-visible warnings
+- 5xx temporary errors trigger exponential backoff
+- Client errors (4xx except 401/429) fail immediately without retry
 - File-level failures tracked but don't abort entire backup
 
 **Glob Pattern Filtering (lines 451-527)**
@@ -344,7 +351,7 @@ Package definition: `Package.swift` (in repository root)
 
 4. **Retention Cleanup**: Irreversible! Users should test policy before running cleanup
 
-5. **Concurrent Uploads**: `uploadConcurrency > 1` is beta, may cause issues with B2 rate limits
+5. **B2 Rate Limits**: B2 returns 429 when API limits are hit. Kodema handles this automatically with exponential backoff (1s, 2s, 4s) and retries. `uploadConcurrency > 1` increases rate limit risk. If hitting rate limits frequently, reduce concurrency or use smaller `partSizeMB`.
 
 6. **Signal Handling**: setupSignalHandlers() must be called early (line 2116). Implements graceful shutdown - finishes current file and saves progress before exiting. Don't use SIGKILL (kill -9) as it bypasses graceful shutdown.
 
