@@ -28,9 +28,9 @@ timeouts:
   overallUploadSeconds: 7200         # 2 hours - max time per file upload
 
 # ============================================================================
-# Folders to Backup (OPTIONAL)
+# Folders to Backup (REQUIRED)
 # ============================================================================
-# If not specified, defaults to all iCloud Drive top-level folders
+# You must specify which folders to backup
 # Run 'kodema list' to discover your iCloud folders!
 include:
   folders:

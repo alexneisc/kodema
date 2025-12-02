@@ -306,6 +306,17 @@ enum TimeoutError: Error {
     case timedOut
 }
 
+enum ConfigError: Error, CustomStringConvertible {
+    case missingFolders
+
+    var description: String {
+        switch self {
+        case .missingFolders:
+            return "No folders configured. Please specify folders to backup in config.yml under 'include.folders'"
+        }
+    }
+}
+
 // These wrappers don't create concurrent tasks to avoid requiring Sendable for captured objects.
 func withTimeoutVoid(_ seconds: TimeInterval, _ operation: () async throws -> Void) async throws {
     try await operation()
@@ -413,35 +424,11 @@ func fileModificationDate(url: URL) -> Date? {
 
 // MARK: - Scanning
 
-func buildFoldersToScan(from config: AppConfig) -> [URL] {
-    if let custom = config.include?.folders, !custom.isEmpty {
-        return custom.map { URL(fileURLWithPath: $0).expandedTilde() }
-    } else {
-        // Default: scan all top-level folders in iCloud Drive
-        if let icloudRoot = findICloudDrive() {
-            do {
-                let contents = try FileManager.default.contentsOfDirectory(
-                    at: icloudRoot,
-                    includingPropertiesForKeys: [.isDirectoryKey],
-                    options: [.skipsHiddenFiles]
-                )
-                let folders = contents.filter { url in
-                    (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
-                }
-                if !folders.isEmpty {
-                    return folders
-                }
-            } catch {
-                // Fall through to default folders
-            }
-        }
-
-        // Fallback if iCloud not available: ~/Documents and ~/Desktop
-        return [
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents"),
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
-        ]
+func buildFoldersToScan(from config: AppConfig) throws -> [URL] {
+    guard let custom = config.include?.folders, !custom.isEmpty else {
+        throw ConfigError.missingFolders
     }
+    return custom.map { URL(fileURLWithPath: $0).expandedTilde() }
 }
 
 func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
@@ -1919,7 +1906,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
     let progress = ProgressTracker()
 
     let excludeHidden = config.filters?.excludeHidden ?? true
-    let folders = buildFoldersToScan(from: config)
+    let folders = try buildFoldersToScan(from: config)
 
     // Scan local files
     var allFiles: [FileItem] = []
@@ -2151,7 +2138,7 @@ func runMirror(config: AppConfig) async throws {
     let progress = ProgressTracker()
 
     let excludeHidden = config.filters?.excludeHidden ?? true
-    let folders = buildFoldersToScan(from: config)
+    let folders = try buildFoldersToScan(from: config)
 
     // Scan
     var allFiles: [FileItem] = []
