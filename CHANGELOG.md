@@ -2,6 +2,96 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.6.0] - 2025-12-03
+
+### Added - Configuration Validation & Resource Management
+
+#### Configuration Testing Command
+- **`kodema test-config`** - Validate configuration before running backups
+- **Config validation** - Checks YAML syntax and required fields
+- **B2 connection test** - Verifies authentication and bucket access with API probe
+- **Folder accessibility** - Ensures configured folders exist and are readable
+- **File counting** - Scans folders to show file counts and total size
+- **iCloud detection** - Identifies files not yet downloaded locally
+- **Disk space check** - Shows available space and warns if insufficient for iCloud files
+- **Settings display** - Shows all configuration settings (filters, retention, timeouts)
+- **Summary output** - Total files to scan and estimated size
+- **Warning system** - Flags potential issues before backup starts
+- Helps catch configuration errors early and understand backup scope
+
+#### Disk Space Validation for iCloud Downloads
+- **Pre-download space check** - Validates available disk space before iCloud file downloads
+- **20% safety buffer** - Requires 120% of file size to account for overhead
+- **Automatic skip** - Files too large for available space are skipped with clear warnings
+- **Detailed messages** - Shows required vs available space when skipping files
+- **Backup continuation** - Other files continue backing up after space issues
+- **test-config warning** - Estimates space needed for iCloud files and warns if insufficient
+- **Failed file tracking** - Skipped files shown in final summary for retry after freeing space
+- Prevents disk full situations that would cause backup failures
+
+#### B2 Rate Limit Handling
+- **429 detection** - Recognizes B2 rate limit responses (Too Many Requests)
+- **Exponential backoff** - Waits 1s, 2s, 4s before retries (configurable via maxRetries)
+- **User-visible warnings** - Shows clear messages: "Rate limit reached, waiting Ns before retry..."
+- **Automatic retry** - Resumes upload after backoff period
+- **Per-part handling** - Large file parts handled individually with rate limit awareness
+- **Dedicated error case** - `.rateLimited(Int?, String)` in B2Error enum with retry-after support
+- **Continued backup** - Backup continues successfully after rate limit clears
+- Prevents cascading failures when hitting B2 API limits
+
+### Changed
+
+#### Documentation Improvements
+- **iCloud integration** - Added prominent callout in README about automatic download/evict
+- **Installation options** - Clear sections for downloading binary vs building from source
+- **Makefile usage** - Replaced direct Swift commands with make targets throughout docs
+- **FAQ optimization** - Reduced from 418 to 276 lines (34% reduction) by removing duplications
+- **Cross-references** - Added links from FAQ to detailed guides (BACKUP_GUIDE, README, CLAUDE)
+- **Removed INSTALLATION.md** - Content consolidated into README Quick Start
+- **test-config documentation** - Added to all guides with examples and use cases
+- **Disk space guidance** - Added troubleshooting for insufficient space scenarios
+- **Rate limit guidance** - Added FAQ entry and mitigation strategies
+
+#### Configuration Requirements
+- **Explicit folder configuration** - Now requires folders to be explicitly listed in config
+- Previously allowed defaulting to all iCloud folders, now requires conscious choice
+- Prevents accidental backup of unwanted folders
+- Use `kodema list` to discover folders, then configure explicitly
+
+### Technical Details
+
+**New Functions:**
+- `getAvailableDiskSpace()` - Checks disk space using volumeAvailableCapacityForImportantUsageKey
+- `testConfig()` - Comprehensive configuration validation and testing
+
+**New Error Cases:**
+- `B2Error.rateLimited(Int?, String)` - Dedicated handling for 429 rate limits
+- `ConfigError.noFoldersConfigured` - Error when no folders specified
+- `ConfigError.validationFailed` - General validation failure
+
+**Modified Functions:**
+- `mapHTTPErrorToB2()` - Added 429 handling, maps to .rateLimited instead of .client
+- `uploadSmallFile()` - Added rate limit case with exponential backoff and user warnings
+- `uploadLargeFile()` - Added rate limit handling for each part upload with progress context
+- `runIncrementalBackup()` - Added disk space check before iCloud downloads (lines 2263-2274)
+
+**Command Flow:**
+- Added test-config case in main CLI switch (lines 2704-2713)
+- Validates config, tests B2, scans folders, checks disk space
+- No modifications to files or remote state
+
+**Error Handling Strategy:**
+- Rate limits (429): Exponential backoff with visible warnings
+- Client errors (4xx except 401/429): Fail immediately without retry
+- Improved separation of error types for appropriate handling
+
+### Documentation
+- Updated README.md with iCloud features, installation options, test-config command
+- Updated BACKUP_GUIDE.md with test-config section and disk space features
+- Optimized FAQ.md structure with cross-references and rate limit guidance
+- Updated CLAUDE.md with disk space validation, rate limit handling, and error strategy
+- Removed INSTALLATION.md (consolidated into README)
+
 ## [0.5.0] - 2025-11-30
 
 ### Added - Reliability & Safety Features
