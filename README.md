@@ -4,17 +4,24 @@
 
 Kodema is a backup tool for macOS that backs up your iCloud Drive and local files to Backblaze B2 cloud storage.
 
+**iCloud Integration:** Automatically downloads iCloud files on-demand during backup and evicts them back to the cloud after upload to save local disk space. No manual file management needed!
+
 ## Features
 
 ✨ **Two Backup Modes:**
 - 📸 **Incremental Backup** - Time Machine-style snapshots with versioning
 - 🔄 **Simple Mirror** - Straightforward file sync
 
+☁️ **Seamless iCloud Integration:**
+- Automatically downloads iCloud files on-demand (no manual pre-download needed)
+- Backs up files stored only in iCloud (not yet downloaded locally)
+- Evicts files back to iCloud after upload to free up disk space
+- Configurable timeouts for large iCloud downloads
+
 🎯 **Smart & Efficient:**
 - Only uploads changed files (size + modification time detection)
 - Incremental manifest updates (prevents orphaned files on interruption)
 - Graceful shutdown (Ctrl+C saves progress and allows resume)
-- Handles iCloud files automatically (downloads on-demand)
 - Streams large files for upload and download (no RAM limits)
 - Configurable retry logic with exponential backoff
 - Beautiful progress tracking with ETA
@@ -41,11 +48,34 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install Kodema
+
+**Option A: Download Pre-built Binary (Recommended)**
+
+Visit: https://github.com/alexneisc/kodema/releases
+Download kodema binary and move to /usr/local/bin/
 
 ```bash
-# Install Swift Package Manager dependencies
-swift build -c release
+sudo mv kodema /usr/local/bin/
+cd /usr/local/bin/
+chmod +x kodema
+```
+
+**Option B: Build from Source**
+
+```bash
+# Clone repository
+git clone https://github.com/alexneisc/kodema.git
+cd kodema
+
+# Build and install (automatically builds release version)
+make install
+
+# Or just build without installing
+make release
+
+# Run without installing
+.build/release/kodema help
 ```
 
 ### 2. Discover Your Files
@@ -247,20 +277,23 @@ backup:
 
 ```bash
 # Debug build
-swift build
+make build
 
 # Release build (optimized)
-swift build -c release
+make release
 
-# Run
+# Run without installing
 .build/release/kodema help
 ```
 
 ### Install System-wide
 
 ```bash
-swift build -c release
-sudo cp .build/release/kodema /usr/local/bin/
+# Build and install in one command
+make install
+
+# Or uninstall
+make uninstall
 ```
 
 ## Scheduling Automatic Backups
