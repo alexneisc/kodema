@@ -111,6 +111,36 @@ filters:
 
 See [BACKUP_GUIDE.md - Configuration](BACKUP_GUIDE.md#configuration) for full config examples.
 
+### Can I backup individual files instead of entire folders?
+
+Yes! You can specify individual files in your config:
+
+```yaml
+include:
+  files:
+    - ~/.ssh/config
+    - ~/.zshrc
+    - ~/important-notes.txt
+    - ~/Documents/project/database.sqlite
+```
+
+You can also mix folders and files in the same config:
+
+```yaml
+include:
+  folders:
+    - ~/Documents
+  files:
+    - ~/.ssh/config
+    - ~/important.txt
+```
+
+This is useful for:
+- Configuration files (SSH, shell configs, etc.)
+- Individual important documents
+- Database files
+- Any files you want versioned separately from folders
+
 ### Can I use multiple configs?
 
 Yes! Use the `--config` flag:

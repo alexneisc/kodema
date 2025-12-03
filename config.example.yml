@@ -28,23 +28,30 @@ timeouts:
   overallUploadSeconds: 7200         # 2 hours - max time per file upload
 
 # ============================================================================
-# Folders to Backup (REQUIRED)
+# Folders and Files to Backup (REQUIRED)
 # ============================================================================
-# You must specify which folders to backup
+# You must specify which folders and/or files to backup
 # Run 'kodema list' to discover your iCloud folders!
 include:
   folders:
     # Standard macOS folders
     - ~/Documents
     - ~/Desktop
-    
+
     # iCloud app examples (run 'kodema list' to find yours)
     # - ~/Library/Mobile Documents/iCloud~md~obsidian/Documents
     # - ~/Library/Mobile Documents/27N4MQEA55~pro~writer/Documents
     # - ~/Library/Mobile Documents/com~apple~CloudDocs
-    
+
     # External drives
     # - /Volumes/ExternalDrive/Important
+
+  # Individual files (optional)
+  files:
+    # Backup specific files
+    # - ~/.ssh/config
+    # - ~/important-file.txt
+    # - ~/Documents/project/database.sqlite
 
 # ============================================================================
 # File Filters (OPTIONAL)

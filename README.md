@@ -100,6 +100,10 @@ include:
   folders:
     - ~/Documents
     - ~/Desktop
+  # Optional: backup specific files
+  files:
+    - ~/.ssh/config
+    - ~/important-notes.txt
 
 backup:
   remotePrefix: "backup"
@@ -177,9 +181,10 @@ B2 Connection:
   ✓ Bucket found: my-backup-bucket (id: 761c061262bca...)
   ✓ API access verified
 
-Folders to Backup:
+Folders and Files to Backup:
   ✓ ~/Documents (1,234 files, 2.3 GB)
   ✓ ~/Desktop (89 files, 456 MB)
+  ✓ ~/.ssh/config (2 KB)
 
 Disk Space:
   ✓ Available: 45.2 GB
@@ -302,6 +307,27 @@ include:
 ```
 
 Use `kodema list` to discover your iCloud app folders!
+
+### Individual Files
+
+You can also backup specific files without backing up entire folders:
+
+```yaml
+include:
+  files:
+    - ~/.ssh/config
+    - ~/.zshrc
+    - ~/important-notes.txt
+    - ~/Documents/project/database.sqlite
+```
+
+This is useful for:
+- Configuration files (SSH, shell configs)
+- Important individual documents
+- Database files
+- Any files you want versioned separately
+
+You can mix `folders` and `files` in the same config - they work together seamlessly.
 
 ### Timeouts
 

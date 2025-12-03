@@ -192,9 +192,10 @@ B2 Connection:
   ✓ Bucket found: my-backup-bucket (id: 761c061262bca...)
   ✓ API access verified
 
-Folders to Backup:
+Folders and Files to Backup:
   ✓ ~/Documents (1,234 files, 2.3 GB)
   ✓ ~/Desktop (89 files, 456 MB)
+  ✓ ~/.ssh/config (2 KB)
   ⚠  iCloud: 23 files not yet downloaded locally
   ⚠  Path length: 2 files have paths longer than 950 bytes
 
@@ -248,12 +249,17 @@ timeouts:
   networkSeconds: 300             # 5 minutes
   overallUploadSeconds: 7200      # 2 hours
 
-# Folders to backup (optional - defaults to all iCloud Drive folders)
+# Folders and files to backup (required - at least one folder or file)
 include:
   folders:
     - ~/Documents
     - ~/Desktop
     - ~/Library/Mobile Documents/iCloud~md~obsidian/Documents
+  # Optional: backup specific files
+  files:
+    - ~/.ssh/config
+    - ~/.zshrc
+    - ~/important-notes.txt
 
 # File filters (optional)
 filters:
@@ -396,10 +402,28 @@ include:
     - ~/Documents/test-folder
 ```
 
-### 4. Monitor First Backup
+### 4. Backup Individual Files
+You can backup specific files without backing up entire folders:
+```yaml
+include:
+  files:
+    - ~/.ssh/config       # SSH configuration
+    - ~/.zshrc            # Shell config
+    - ~/important.txt     # Important documents
+```
+
+Useful for:
+- Configuration files you want versioned separately
+- Individual important documents
+- Database files
+- Any files outside your main backup folders
+
+You can mix `folders` and `files` - they work together seamlessly.
+
+### 5. Monitor First Backup
 The first incremental backup will upload everything (like a mirror). Subsequent backups will be much faster.
 
-### 5. Set Reasonable Retention
+### 6. Set Reasonable Retention
 ```yaml
 backup:
   retention:
@@ -410,7 +434,7 @@ backup:
 ```
 Adjust based on your needs and B2 storage costs.
 
-### 6. Use Filters to Exclude Junk and Deep Structures
+### 7. Use Filters to Exclude Junk and Deep Structures
 ```yaml
 filters:
   excludeGlobs:
@@ -422,13 +446,13 @@ filters:
 ```
 **Tip:** Deep folder structures (like `node_modules`) can create paths longer than B2's 1000-byte limit. Use `kodema test-config` to detect these before backup.
 
-### 7. Schedule Regular Backups
+### 8. Schedule Regular Backups
 ```bash
 # Add to crontab for daily backups at 2 AM
 0 2 * * * /usr/local/bin/kodema backup
 ```
 
-### 8. Run Cleanup Regularly
+### 9. Run Cleanup Regularly
 ```bash
 # Weekly cleanup on Sundays at 3 AM
 0 3 * * 0 /usr/local/bin/kodema cleanup

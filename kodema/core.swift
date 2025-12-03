@@ -24,6 +24,7 @@ struct TimeoutsConfig: Decodable {
 
 struct IncludeConfig: Decodable {
     let folders: [String]?
+    let files: [String]?
 }
 
 struct FiltersConfig: Decodable {
@@ -466,10 +467,22 @@ func fileModificationDate(url: URL) -> Date? {
 // MARK: - Scanning
 
 func buildFoldersToScan(from config: AppConfig) throws -> [URL] {
-    guard let custom = config.include?.folders, !custom.isEmpty else {
+    let hasFolders = config.include?.folders?.isEmpty == false
+    let hasFiles = config.include?.files?.isEmpty == false
+    guard hasFolders || hasFiles else {
         throw ConfigError.missingFolders
     }
-    return custom.map { URL(fileURLWithPath: $0).expandedTilde() }
+    if let folders = config.include?.folders {
+        return folders.map { URL(fileURLWithPath: $0).expandedTilde() }
+    }
+    return []
+}
+
+func buildFilesToScan(from config: AppConfig) -> [URL] {
+    if let files = config.include?.files {
+        return files.map { URL(fileURLWithPath: $0).expandedTilde() }
+    }
+    return []
 }
 
 func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
@@ -501,6 +514,22 @@ func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
         }
     }
     return files
+}
+
+func scanFile(url: URL) -> FileItem? {
+    let fileManager = FileManager.default
+    do {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+        if values.isRegularFile == true {
+            let status = checkFileStatus(url: url)
+            let size = fileSize(url: url)
+            let mtime = fileModificationDate(url: url)
+            return FileItem(url: url, status: status, size: size, modificationDate: mtime)
+        }
+    } catch {
+        // File doesn't exist or not accessible
+    }
+    return nil
 }
 
 // MARK: - Glob helpers (exclude patterns)
@@ -2011,12 +2040,15 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
         }
     }
 
-    // 3. Folders validation
-    print("\n\(boldColor)Folders to Backup:\(resetColor)")
+    // 3. Folders and files validation
+    print("\n\(boldColor)Folders and Files to Backup:\(resetColor)")
 
-    guard let folders = config.include?.folders, !folders.isEmpty else {
-        print("  \(errorColor)✗ No folders configured\(resetColor)")
-        print("    Add folders to config under 'include.folders'")
+    let folders = config.include?.folders ?? []
+    let files = config.include?.files ?? []
+
+    guard !folders.isEmpty || !files.isEmpty else {
+        print("  \(errorColor)✗ No folders or files configured\(resetColor)")
+        print("    Add folders to config under 'include.folders' or files under 'include.files'")
         hasErrors = true
 
         print("\n\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
@@ -2105,6 +2137,51 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
         } else {
             print("  \(errorColor)✗ \(folder) - folder does not exist\(resetColor)")
             print("    Remove this folder from config or create it")
+            hasErrors = true
+        }
+    }
+
+    // Check individual files
+    for file in files {
+        let expandedPath = NSString(string: file).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expandedPath)
+
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: fileURL.path, isDirectory: &isDir) && !isDir.boolValue {
+            // Check file properties
+            if let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+               let size = resourceValues.fileSize {
+                totalFiles += 1
+                totalBytes += Int64(size)
+
+                // Check path length
+                let relativePath = fileURL.lastPathComponent
+                let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+                if versionPath.utf8.count > maxB2PathLength {
+                    longPathFiles += 1
+                }
+
+                // Check iCloud status
+                if let isUbiquitous = resourceValues.isUbiquitousItem, isUbiquitous {
+                    if let downloadStatus = resourceValues.ubiquitousItemDownloadingStatus {
+                        if downloadStatus != URLUbiquitousItemDownloadingStatus.current {
+                            icloudNotDownloaded += 1
+                        }
+                    }
+                }
+
+                print("  \(localColor)✓\(resetColor) \(file) (\(formatBytes(Int64(size))))")
+            } else {
+                print("  \(errorColor)✗ \(file) - cannot read file properties\(resetColor)")
+                hasErrors = true
+            }
+        } else if fm.fileExists(atPath: fileURL.path, isDirectory: &isDir) && isDir.boolValue {
+            print("  \(errorColor)✗ \(file) - is a directory, not a file\(resetColor)")
+            print("    Use 'include.folders' for directories")
+            hasErrors = true
+        } else {
+            print("  \(errorColor)✗ \(file) - file does not exist\(resetColor)")
+            print("    Remove this file from config or create it")
             hasErrors = true
         }
     }
@@ -2230,11 +2307,17 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
 
     let excludeHidden = config.filters?.excludeHidden ?? true
     let folders = try buildFoldersToScan(from: config)
+    let files = buildFilesToScan(from: config)
 
     // Scan local files
     var allFiles: [FileItem] = []
     for folder in folders {
         allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
+    }
+    for file in files {
+        if let fileItem = scanFile(url: file) {
+            allFiles.append(fileItem)
+        }
     }
     allFiles = applyFilters(allFiles, filters: config.filters)
 
@@ -2486,11 +2569,17 @@ func runMirror(config: AppConfig) async throws {
 
     let excludeHidden = config.filters?.excludeHidden ?? true
     let folders = try buildFoldersToScan(from: config)
+    let files = buildFilesToScan(from: config)
 
     // Scan
     var allFiles: [FileItem] = []
     for folder in folders {
         allFiles.append(contentsOf: scanFolder(url: folder, excludeHidden: excludeHidden))
+    }
+    for file in files {
+        if let fileItem = scanFile(url: file) {
+            allFiles.append(fileItem)
+        }
     }
     allFiles = applyFilters(allFiles, filters: config.filters)
 
