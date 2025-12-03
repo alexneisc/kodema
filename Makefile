@@ -1,6 +1,6 @@
 # Makefile for Kodema
 
-.PHONY: all build release clean install uninstall test help
+.PHONY: all build release clean install uninstall resolve test help
 
 # Default target
 all: build
@@ -33,10 +33,15 @@ uninstall:
 	sudo rm -f /usr/local/bin/kodema
 	@echo "✅ Uninstalled"
 
+# Resolve dependencies
+resolve:
+	@echo "📦 Resolving dependencies..."
+	swift package resolve
+
 # Run tests
 test:
 	@echo "🧪 Running tests..."
-	@echo "No tests defined yet"
+	@echo "⚠️  No tests defined yet (requires library target refactoring)"
 
 # Show help
 help:
@@ -48,6 +53,7 @@ help:
 	@echo "  make clean     - Clean build artifacts"
 	@echo "  make install   - Install to /usr/local/bin (requires sudo)"
 	@echo "  make uninstall - Remove from /usr/local/bin (requires sudo)"
+	@echo "  make resolve   - Resolve and download dependencies"
 	@echo "  make test      - Run tests"
 	@echo "  make help      - Show this help"
 	@echo ""

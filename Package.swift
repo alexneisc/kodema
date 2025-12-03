@@ -22,10 +22,6 @@ let package = Package(
                 "core.swift",
                 "Version.swift"
             ]
-        ),
-        .testTarget(
-            name: "KodemaTests",
-            dependencies: ["Kodema"]
         )
     ]
 )
