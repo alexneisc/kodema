@@ -40,6 +40,14 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 - Conflict detection with overwrite confirmation
 - Preserves original modification timestamps
 
+🔐 **Client-Side Encryption:**
+- AES-256-CBC encryption before upload to B2
+- Three key storage methods: macOS Keychain, file, or passphrase
+- Optional filename encryption (hides file structure)
+- Streaming encryption (8MB chunks, no RAM limits)
+- Mixed backups (encrypted + plain files in same backup)
+- Automatic decryption on restore with skip logic
+
 🎨 **User Friendly:**
 - Discover iCloud folders with `kodema list`
 - Rich terminal UI with colors and progress bars
@@ -112,6 +120,12 @@ backup:
     daily: 30
     weekly: 12
     monthly: 12
+
+# Optional: Enable encryption
+encryption:
+  enabled: false  # Set to true to enable encryption
+  keySource: keychain
+  encryptFilenames: false
 
 mirror:
   remotePrefix: "mirror"
@@ -328,6 +342,57 @@ This is useful for:
 - Any files you want versioned separately
 
 You can mix `folders` and `files` in the same config - they work together seamlessly.
+
+### Client-Side Encryption
+
+Kodema supports optional client-side encryption for maximum security. Files are encrypted **before** upload to B2 using AES-256-CBC.
+
+**Basic Setup (Keychain):**
+```yaml
+encryption:
+  enabled: true
+  keySource: keychain  # Store key securely in macOS Keychain
+  encryptFilenames: false
+```
+
+**File-Based Key (for sharing across machines):**
+```yaml
+encryption:
+  enabled: true
+  keySource: file
+  keyFile: "~/.config/kodema/encryption-key.bin"
+  encryptFilenames: false
+```
+
+**Passphrase (interactive):**
+```yaml
+encryption:
+  enabled: true
+  keySource: passphrase  # Prompt on each backup/restore
+  encryptFilenames: false
+```
+
+**Maximum Security (encrypt content + filenames):**
+```yaml
+encryption:
+  enabled: true
+  keySource: keychain
+  encryptFilenames: true  # Hide file structure from B2
+```
+
+**Key Features:**
+- 🔒 AES-256-CBC encryption (industry standard)
+- 📦 Streaming encryption (8MB chunks, no RAM limits)
+- 🔑 Three key storage methods (keychain, file, passphrase)
+- 🗂️ Optional filename encryption
+- 🔄 Mixed backups (encrypted + plain files supported)
+- ⚠️ Skip encrypted files on restore if key not available
+
+**⚠️ Important:**
+- **Keep your encryption key safe!** Without it, backups are unrecoverable
+- Keychain keys are tied to your macOS user account
+- For file-based keys, back up the key file separately
+- Filename encryption makes backups unreadable in B2 web interface
 
 ### Timeouts
 

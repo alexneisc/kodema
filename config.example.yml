@@ -154,6 +154,59 @@ mirror:
   remotePrefix: "mirror"
 
 # ============================================================================
+# Encryption (OPTIONAL)
+# ============================================================================
+# Client-side encryption for backup security
+# Files are encrypted before upload to B2
+encryption:
+  enabled: false              # Enable encryption (default: false)
+
+  # Key source options:
+  # - keychain: Store key in macOS Keychain (most secure, recommended)
+  # - file: Store key in a file (must keep file safe!)
+  # - passphrase: Prompt for passphrase on each backup/restore
+  keySource: keychain
+
+  # Key file path (if keySource: file)
+  # IMPORTANT: Keep this file safe and backed up separately!
+  # keyFile: "~/.config/kodema/encryption-key.bin"
+
+  # Keychain account name (if keySource: keychain)
+  # keychainAccount: "kodema-encryption-key"
+
+  # Encrypt file names in addition to content (default: false)
+  # WARNING: If enabled, you cannot browse backup files in B2 web interface
+  # File names will be encrypted and unreadable without the key
+  encryptFilenames: false
+
+# Examples for different encryption setups:
+
+# 1. KEYCHAIN (Recommended for single-user macOS)
+# encryption:
+#   enabled: true
+#   keySource: keychain
+#   encryptFilenames: false
+
+# 2. FILE-BASED (For sharing key across machines)
+# encryption:
+#   enabled: true
+#   keySource: file
+#   keyFile: "~/.config/kodema/encryption-key.bin"
+#   encryptFilenames: false
+
+# 3. PASSPHRASE (Interactive, no key storage)
+# encryption:
+#   enabled: true
+#   keySource: passphrase
+#   encryptFilenames: false
+
+# 4. MAXIMUM SECURITY (encrypt content + filenames)
+# encryption:
+#   enabled: true
+#   keySource: keychain
+#   encryptFilenames: true
+
+# ============================================================================
 # NOTES
 # ============================================================================
 
@@ -172,3 +225,12 @@ mirror:
 # - 'hourly: 24' means "for the last 24 hours, keep ALL snapshots"
 # - 'daily: 30' means "for the last 30 days, keep ONE snapshot per day"
 # - Older snapshots are automatically deleted by 'kodema cleanup'
+
+# Encryption:
+# - Uses AES-256-CBC for file content encryption
+# - Files are encrypted before upload (client-side encryption)
+# - Without the key, backups are unrecoverable - keep your key safe!
+# - Supports three key storage methods: keychain, file, passphrase
+# - Optional filename encryption hides file structure from B2
+# - Encrypted files have .encrypted extension in B2
+# - Mixed backups supported (encrypted + plain files in same backup)

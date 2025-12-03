@@ -281,6 +281,12 @@ backup:
     weekly: 12                    # Keep weekly snapshots for 12 weeks
     monthly: 12                   # Keep monthly snapshots for 12 months
 
+# Encryption (optional)
+encryption:
+  enabled: false                  # Enable client-side encryption
+  keySource: keychain             # keychain, file, or passphrase
+  encryptFilenames: false         # Encrypt filenames (max security)
+
 # Mirror settings
 mirror:
   remotePrefix: "mirror"          # B2 path prefix
@@ -456,6 +462,34 @@ filters:
 ```bash
 # Weekly cleanup on Sundays at 3 AM
 0 3 * * 0 /usr/local/bin/kodema cleanup
+```
+
+### 10. Enable Encryption for Sensitive Data
+If your backups contain sensitive information, enable client-side encryption:
+
+```yaml
+encryption:
+  enabled: true
+  keySource: keychain  # Most secure for single-user macOS
+  encryptFilenames: false  # Or true for maximum security
+```
+
+**Key Management Options:**
+- **Keychain** (recommended): Key stored securely in macOS Keychain
+- **File**: Store key in a file for sharing across machines
+- **Passphrase**: Interactive prompt on each backup/restore
+
+**Important:**
+- **Back up your encryption key separately!** Without it, backups are unrecoverable
+- For keychain: key is tied to your macOS user account
+- For file-based: save `~/.config/kodema/encryption-key.bin` securely
+- Filename encryption (`encryptFilenames: true`) hides file structure from B2
+
+**Generate and store encryption key:**
+```bash
+# The key will be automatically generated on first backup
+# For keychain source, it's stored securely in macOS Keychain
+# For file source, save the generated key file safely
 ```
 
 ---

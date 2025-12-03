@@ -325,7 +325,25 @@ If either changed, the file is uploaded. Fast and reliable for most use cases.
 
 ### Does it support encryption?
 
-B2 has server-side encryption. Client-side encryption is planned for future releases.
+Yes! Kodema now supports **client-side encryption** with AES-256-CBC:
+
+```yaml
+encryption:
+  enabled: true
+  keySource: keychain  # or file, or passphrase
+  encryptFilenames: false  # Optional: encrypt filenames too
+```
+
+**Key features:**
+- Files encrypted **before** upload to B2
+- Three key storage methods (keychain, file, passphrase)
+- Optional filename encryption
+- Streaming encryption (8MB chunks, no RAM limits)
+- Mixed backups (encrypted + plain files supported)
+
+See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for detailed setup instructions.
+
+**⚠️ Important:** Keep your encryption key safe! Without it, backups are unrecoverable.
 
 ### What happens if upload fails?
 

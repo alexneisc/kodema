@@ -2,6 +2,8 @@ import Foundation
 import Yams
 import CommonCrypto
 import Darwin
+import RNCryptor
+import Security
 
 // MARK: - Models: Config
 
@@ -51,6 +53,20 @@ struct MirrorConfig: Decodable {
     let remotePrefix: String?
 }
 
+enum EncryptionKeySource: String, Decodable {
+    case keychain
+    case file
+    case passphrase
+}
+
+struct EncryptionConfig: Decodable {
+    let enabled: Bool?
+    let keySource: EncryptionKeySource?
+    let keyFile: String?            // Path to key file (if keySource == .file)
+    let keychainAccount: String?    // Keychain account name (if keySource == .keychain)
+    let encryptFilenames: Bool?     // Encrypt file names in addition to content
+}
+
 struct AppConfig: Decodable {
     let b2: B2Config
     let timeouts: TimeoutsConfig?
@@ -58,6 +74,7 @@ struct AppConfig: Decodable {
     let filters: FiltersConfig?
     let backup: BackupConfig?
     let mirror: MirrorConfig?
+    let encryption: EncryptionConfig?
 }
 
 // MARK: - FileItem
@@ -72,10 +89,13 @@ struct FileItem {
 // MARK: - Snapshot & Versioning
 
 struct FileVersionInfo: Codable {
-    let path: String           // relative path from scan root
-    let size: Int64
+    let path: String           // relative path from scan root (original path if encrypted)
+    let size: Int64            // original file size (before encryption)
     let modificationDate: Date
     let versionTimestamp: String  // "2024-11-27_143022"
+    let encrypted: Bool?       // true if file content is encrypted
+    let encryptedPath: String? // encrypted path in B2 (if encryptFilenames enabled)
+    let encryptedSize: Int64?  // encrypted file size (after encryption)
 }
 
 struct SnapshotManifest: Codable {
@@ -337,6 +357,38 @@ enum ConfigError: Error, CustomStringConvertible {
             return "No folders configured in include.folders"
         case .validationFailed:
             return "Configuration validation failed"
+        }
+    }
+}
+
+enum EncryptionError: Error, CustomStringConvertible {
+    case keyNotFound
+    case invalidKey
+    case encryptionFailed(String)
+    case decryptionFailed(String)
+    case keychainError(String)
+    case passphraseRequired
+    case invalidConfiguration(String)
+    case filenameTooLong
+
+    var description: String {
+        switch self {
+        case .keyNotFound:
+            return "Encryption key not found"
+        case .invalidKey:
+            return "Invalid encryption key"
+        case .encryptionFailed(let msg):
+            return "Encryption failed: \(msg)"
+        case .decryptionFailed(let msg):
+            return "Decryption failed: \(msg)"
+        case .keychainError(let msg):
+            return "Keychain error: \(msg)"
+        case .passphraseRequired:
+            return "Passphrase required for encryption"
+        case .invalidConfiguration(let msg):
+            return "Invalid encryption configuration: \(msg)"
+        case .filenameTooLong:
+            return "Encrypted filename exceeds maximum length"
         }
     }
 }
@@ -658,6 +710,376 @@ func sha1HexStream(fileURL: URL, bufferSize: Int = 8 * 1024 * 1024) throws -> St
             var digest = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
             CC_SHA1_Final(&digest, &ctx)
             return digest.map { String(format: "%02x", $0) }.joined()
+        }
+    }
+}
+
+// MARK: - Encryption Manager
+
+class EncryptionManager {
+    let config: EncryptionConfig
+    private var cachedKey: Data?
+    private let chunkSize = 8 * 1024 * 1024  // 8MB chunks
+
+    init(config: EncryptionConfig) {
+        self.config = config
+    }
+
+    // MARK: - Key Management
+
+    func getEncryptionKey() throws -> Data {
+        if let cached = cachedKey {
+            return cached
+        }
+
+        guard let keySource = config.keySource else {
+            throw EncryptionError.invalidConfiguration("No key source specified")
+        }
+
+        let key: Data
+        switch keySource {
+        case .keychain:
+            key = try getKeyFromKeychain()
+        case .file:
+            key = try getKeyFromFile()
+        case .passphrase:
+            key = try getKeyFromPassphrase()
+        }
+
+        cachedKey = key
+        return key
+    }
+
+    private func getKeyFromKeychain() throws -> Data {
+        let account = config.keychainAccount ?? "kodema-encryption-key"
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess, let keyData = result as? Data else {
+            if status == errSecItemNotFound {
+                throw EncryptionError.keyNotFound
+            }
+            throw EncryptionError.keychainError("Failed to retrieve key: \(status)")
+        }
+
+        return keyData
+    }
+
+    private func getKeyFromFile() throws -> Data {
+        guard let keyFile = config.keyFile else {
+            throw EncryptionError.invalidConfiguration("Key file path not specified")
+        }
+
+        let expandedPath = NSString(string: keyFile).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expandedPath)
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw EncryptionError.keyNotFound
+        }
+
+        let keyData = try Data(contentsOf: fileURL)
+        guard !keyData.isEmpty else {
+            throw EncryptionError.invalidKey
+        }
+
+        return keyData
+    }
+
+    private func getKeyFromPassphrase() throws -> Data {
+        // Prompt user for passphrase
+        print("Enter encryption passphrase: ", terminator: "")
+        fflush(stdout)
+
+        // Disable echo for password input
+        var oldt = termios()
+        tcgetattr(STDIN_FILENO, &oldt)
+        var newt = oldt
+        newt.c_lflag &= ~UInt(ECHO)
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt)
+
+        defer {
+            // Restore echo
+            tcsetattr(STDIN_FILENO, TCSANOW, &oldt)
+            print()  // New line after password
+        }
+
+        guard let passphrase = readLine() else {
+            throw EncryptionError.passphraseRequired
+        }
+
+        guard !passphrase.isEmpty else {
+            throw EncryptionError.passphraseRequired
+        }
+
+        // Derive key from passphrase using PBKDF2
+        // RNCryptor uses 32-byte keys for AES-256
+        return try deriveKeyFromPassphrase(passphrase)
+    }
+
+    private func deriveKeyFromPassphrase(_ passphrase: String) throws -> Data {
+        // Use PBKDF2 to derive a key from the passphrase
+        // RNCryptor uses 10,000 iterations by default
+        let salt = "kodema-encryption-salt".data(using: .utf8)!
+        let iterations: UInt32 = 10000
+        let keyLength = 32  // 256 bits for AES-256
+
+        var derivedKey = Data(count: keyLength)
+        let result = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
+            salt.withUnsafeBytes { saltBytes in
+                CCKeyDerivationPBKDF(
+                    CCPBKDFAlgorithm(kCCPBKDF2),
+                    passphrase,
+                    passphrase.utf8.count,
+                    saltBytes.bindMemory(to: UInt8.self).baseAddress,
+                    salt.count,
+                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                    iterations,
+                    derivedKeyBytes.bindMemory(to: UInt8.self).baseAddress,
+                    keyLength
+                )
+            }
+        }
+
+        guard result == kCCSuccess else {
+            throw EncryptionError.encryptionFailed("Key derivation failed")
+        }
+
+        return derivedKey
+    }
+
+    func storeKeyInKeychain(_ key: Data, account: String? = nil) throws {
+        let accountName = account ?? config.keychainAccount ?? "kodema-encryption-key"
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: accountName,
+            kSecValueData as String: key
+        ]
+
+        // Try to add, if exists, update
+        var status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            let updateQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrAccount as String: accountName
+            ]
+            let attributes: [String: Any] = [
+                kSecValueData as String: key
+            ]
+            status = SecItemUpdate(updateQuery as CFDictionary, attributes as CFDictionary)
+        }
+
+        guard status == errSecSuccess else {
+            throw EncryptionError.keychainError("Failed to store key: \(status)")
+        }
+    }
+
+    func generateAndStoreKey() throws -> Data {
+        // Generate a random 256-bit key
+        var keyData = Data(count: 32)
+        let result = keyData.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!)
+        }
+
+        guard result == errSecSuccess else {
+            throw EncryptionError.encryptionFailed("Failed to generate random key")
+        }
+
+        // Store in keychain if using keychain
+        if config.keySource == .keychain {
+            try storeKeyInKeychain(keyData)
+        }
+
+        cachedKey = keyData
+        return keyData
+    }
+
+    // MARK: - File Encryption/Decryption
+
+    func encryptFile(inputURL: URL, outputURL: URL) throws -> Int64 {
+        let key = try getEncryptionKey()
+
+        guard let inputStream = InputStream(url: inputURL) else {
+            throw EncryptionError.encryptionFailed("Cannot open input file")
+        }
+
+        guard let outputStream = OutputStream(url: outputURL, append: false) else {
+            throw EncryptionError.encryptionFailed("Cannot create output file")
+        }
+
+        inputStream.open()
+        outputStream.open()
+
+        defer {
+            inputStream.close()
+            outputStream.close()
+        }
+
+        // Create RNCryptor encryptor
+        var encryptor = RNCryptor.Encryptor(password: String(data: key, encoding: .utf8) ?? "")
+
+        var buffer = [UInt8](repeating: 0, count: chunkSize)
+        var totalBytesWritten: Int64 = 0
+
+        while inputStream.hasBytesAvailable {
+            let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+            if bytesRead < 0 {
+                throw EncryptionError.encryptionFailed("Read error")
+            } else if bytesRead == 0 {
+                break
+            }
+
+            let chunk = Data(bytes: buffer, count: bytesRead)
+            let encryptedChunk = encryptor.update(withData: chunk)
+
+            if !encryptedChunk.isEmpty {
+                let bytesWritten = encryptedChunk.withUnsafeBytes { ptr in
+                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: encryptedChunk.count)
+                }
+                if bytesWritten < 0 {
+                    throw EncryptionError.encryptionFailed("Write error")
+                }
+                totalBytesWritten += Int64(bytesWritten)
+            }
+        }
+
+        // Finalize encryption
+        let finalData = encryptor.finalData()
+        if !finalData.isEmpty {
+            let bytesWritten = finalData.withUnsafeBytes { ptr in
+                outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+            }
+            if bytesWritten < 0 {
+                throw EncryptionError.encryptionFailed("Write error on finalization")
+            }
+            totalBytesWritten += Int64(bytesWritten)
+        }
+
+        return totalBytesWritten
+    }
+
+    func decryptFile(inputURL: URL, outputURL: URL) throws {
+        let key = try getEncryptionKey()
+
+        guard let inputStream = InputStream(url: inputURL) else {
+            throw EncryptionError.decryptionFailed("Cannot open input file")
+        }
+
+        guard let outputStream = OutputStream(url: outputURL, append: false) else {
+            throw EncryptionError.decryptionFailed("Cannot create output file")
+        }
+
+        inputStream.open()
+        outputStream.open()
+
+        defer {
+            inputStream.close()
+            outputStream.close()
+        }
+
+        // Create RNCryptor decryptor
+        var decryptor = RNCryptor.Decryptor(password: String(data: key, encoding: .utf8) ?? "")
+
+        var buffer = [UInt8](repeating: 0, count: chunkSize)
+
+        while inputStream.hasBytesAvailable {
+            let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+            if bytesRead < 0 {
+                throw EncryptionError.decryptionFailed("Read error")
+            } else if bytesRead == 0 {
+                break
+            }
+
+            let chunk = Data(bytes: buffer, count: bytesRead)
+            do {
+                let decryptedChunk = try decryptor.update(withData: chunk)
+
+                if !decryptedChunk.isEmpty {
+                    let bytesWritten = decryptedChunk.withUnsafeBytes { ptr in
+                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: decryptedChunk.count)
+                    }
+                    if bytesWritten < 0 {
+                        throw EncryptionError.decryptionFailed("Write error")
+                    }
+                }
+            } catch {
+                throw EncryptionError.decryptionFailed("Decryption error: \(error)")
+            }
+        }
+
+        // Finalize decryption
+        do {
+            let finalData = try decryptor.finalData()
+            if !finalData.isEmpty {
+                let bytesWritten = finalData.withUnsafeBytes { ptr in
+                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+                }
+                if bytesWritten < 0 {
+                    throw EncryptionError.decryptionFailed("Write error on finalization")
+                }
+            }
+        } catch {
+            throw EncryptionError.decryptionFailed("Finalization error: \(error)")
+        }
+    }
+
+    // MARK: - Filename Encryption/Decryption
+
+    func encryptFilename(_ filename: String) throws -> String {
+        let key = try getEncryptionKey()
+
+        let data = filename.data(using: .utf8) ?? Data()
+        let password = String(data: key, encoding: .utf8) ?? ""
+        let encrypted = RNCryptor.encrypt(data: data, withPassword: password)
+
+        // Base64 encode with URL-safe characters
+        let base64 = encrypted.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+
+        // Check length (B2 has 1024 byte limit, we use 950 for safety)
+        if base64.utf8.count > 900 {
+            throw EncryptionError.filenameTooLong
+        }
+
+        return base64
+    }
+
+    func decryptFilename(_ encryptedFilename: String) throws -> String {
+        let key = try getEncryptionKey()
+
+        // Restore Base64 padding and standard characters
+        var base64 = encryptedFilename
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        // Add padding
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+
+        guard let encrypted = Data(base64Encoded: base64) else {
+            throw EncryptionError.decryptionFailed("Invalid base64 encoding")
+        }
+
+        let password = String(data: key, encoding: .utf8) ?? ""
+        do {
+            let decrypted = try RNCryptor.decrypt(data: encrypted, withPassword: password)
+            guard let filename = String(data: decrypted, encoding: .utf8) else {
+                throw EncryptionError.decryptionFailed("Invalid UTF-8 in decrypted filename")
+            }
+            return filename
+        } catch {
+            throw EncryptionError.decryptionFailed("Filename decryption failed: \(error)")
         }
     }
 }
@@ -2328,6 +2750,13 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
 
+    // Initialize encryption manager if encryption enabled
+    var encryptionManager: EncryptionManager?
+    if let encryptionConfig = config.encryption, encryptionConfig.enabled == true {
+        encryptionManager = EncryptionManager(config: encryptionConfig)
+        print("  🔐 Encryption enabled")
+    }
+
     // Generate snapshot timestamp
     let timestamp = generateTimestamp()
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
@@ -2458,55 +2887,103 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
                 continue
             }
 
-            // Upload to versioned path
-            let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+            // Prepare upload path and encryption
+            var uploadURL = url
+            var uploadPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+            var isEncrypted = false
+            var encryptedFilePath: String?
+            var encryptedFileSize: Int64?
+            var tempEncryptedURL: URL?
+
+            // Encrypt file if encryption enabled
+            if let encMgr = encryptionManager {
+                do {
+                    // Encrypt filename if configured
+                    if encMgr.config.encryptFilenames == true {
+                        let encryptedFileName = try encMgr.encryptFilename(relativePath)
+                        uploadPath = "\(remotePrefix)/files/\(encryptedFileName)/\(timestamp)"
+                        encryptedFilePath = encryptedFileName
+                    }
+
+                    // Create temp file for encrypted content
+                    let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                        .appendingPathComponent(UUID().uuidString)
+                        .appendingPathExtension("encrypted")
+
+                    // Encrypt file content
+                    encryptedFileSize = try encMgr.encryptFile(inputURL: url, outputURL: tempURL)
+                    uploadURL = tempURL
+                    tempEncryptedURL = tempURL
+                    isEncrypted = true
+                    uploadPath += ".encrypted"
+                } catch {
+                    print("  \(errorColor)⚠️  Encryption failed: \(error)\(resetColor)")
+                    await progress.fileFailed()
+                    continue
+                }
+            }
 
             // Check if path length exceeds B2 limit
-            let pathByteCount = versionPath.utf8.count
+            let pathByteCount = uploadPath.utf8.count
             if pathByteCount > maxB2PathLength {
                 print("  \(errorColor)⚠️  Skipping file with path too long (\(pathByteCount) bytes > \(maxB2PathLength) limit)\(resetColor)")
-                print("  \(dimColor)   Path: \(versionPath)\(resetColor)")
+                print("  \(dimColor)   Path: \(uploadPath)\(resetColor)")
+                if let temp = tempEncryptedURL {
+                    try? FileManager.default.removeItem(at: temp)
+                }
                 await progress.fileSkipped()
                 await progress.printProgress()
                 continue
             }
 
             let contentType = guessContentType(for: url)
-            let size = file.size ?? (fileSize(url: url) ?? 0)
+            let originalSize = file.size ?? (fileSize(url: url) ?? 0)
             let mtime = file.modificationDate ?? Date()
 
-            await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(size)))")
+            await progress.startFile(name: "\(url.lastPathComponent) (\(formatBytes(originalSize)))")
             await progress.printProgress()
 
             let smallFileThreshold: Int64 = 5 * 1024 * 1024 * 1024 // 5 GB
+            let uploadSize = encryptedFileSize ?? originalSize
 
-            if size <= smallFileThreshold {
-                let sha1 = try sha1HexStream(fileURL: url)
+            if uploadSize <= smallFileThreshold {
+                let sha1 = try sha1HexStream(fileURL: uploadURL)
                 try await withTimeoutVoid(overallUploadTimeout) {
-                    try await client.uploadSmallFile(fileURL: url, fileName: versionPath, contentType: contentType, sha1Hex: sha1)
+                    try await client.uploadSmallFile(fileURL: uploadURL, fileName: uploadPath, contentType: contentType, sha1Hex: sha1)
                 }
             } else {
                 try await withTimeoutVoid(overallUploadTimeout) {
-                    try await client.uploadLargeFile(fileURL: url, fileName: versionPath, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
+                    try await client.uploadLargeFile(fileURL: uploadURL, fileName: uploadPath, contentType: contentType, partSize: partSizeBytes, concurrency: uploadConcurrency)
                 }
             }
 
-            await progress.fileCompleted(bytes: size)
+            // Clean up temp encrypted file
+            if let temp = tempEncryptedURL {
+                try? FileManager.default.removeItem(at: temp)
+            }
+
+            await progress.fileCompleted(bytes: originalSize)
 
             // Update manifest: replace old version or add new
             if let existingIndex = manifestFiles.firstIndex(where: { $0.path == relativePath }) {
                 manifestFiles[existingIndex] = FileVersionInfo(
                     path: relativePath,
-                    size: size,
+                    size: originalSize,
                     modificationDate: mtime,
-                    versionTimestamp: timestamp
+                    versionTimestamp: timestamp,
+                    encrypted: isEncrypted ? true : nil,
+                    encryptedPath: encryptedFilePath,
+                    encryptedSize: encryptedFileSize
                 )
             } else {
                 manifestFiles.append(FileVersionInfo(
                     path: relativePath,
-                    size: size,
+                    size: originalSize,
                     modificationDate: mtime,
-                    versionTimestamp: timestamp
+                    versionTimestamp: timestamp,
+                    encrypted: isEncrypted ? true : nil,
+                    encryptedPath: encryptedFilePath,
+                    encryptedSize: encryptedFileSize
                 ))
             }
 
@@ -3002,16 +3479,32 @@ func handleConflicts(_ conflicts: [FileConflict]) throws {
     }
 }
 
-func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remotePrefix: String, snapshot: SnapshotManifest, outputDir: URL, progress: ProgressTracker) async throws {
+func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remotePrefix: String, snapshot: SnapshotManifest, outputDir: URL, progress: ProgressTracker, encryptionManager: EncryptionManager?) async throws {
     let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
     await progress.initialize(totalFiles: files.count, totalBytes: totalBytes)
+
+    var skippedEncrypted = 0
 
     for file in files {
         await progress.startFile(name: "\(file.path) (\(formatBytes(file.size)))")
         await progress.printProgress()
 
         do {
-            let remotePath = "\(remotePrefix)/files/\(file.path)/\(file.versionTimestamp)"
+            // Check if file is encrypted
+            let isEncrypted = file.encrypted == true
+
+            // Build remote path (handle encrypted filenames)
+            var remotePath: String
+            if isEncrypted {
+                if let encryptedPath = file.encryptedPath {
+                    remotePath = "\(remotePrefix)/files/\(encryptedPath)/\(file.versionTimestamp).encrypted"
+                } else {
+                    remotePath = "\(remotePrefix)/files/\(file.path)/\(file.versionTimestamp).encrypted"
+                }
+            } else {
+                remotePath = "\(remotePrefix)/files/\(file.path)/\(file.versionTimestamp)"
+            }
+
             let localPath = outputDir.appendingPathComponent(file.path)
 
             try FileManager.default.createDirectory(
@@ -3019,8 +3512,38 @@ func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remoteP
                 withIntermediateDirectories: true
             )
 
-            // Use streaming download to avoid loading entire file into RAM
-            try await client.downloadFileStreaming(fileName: remotePath, to: localPath)
+            if isEncrypted {
+                // Handle encrypted file
+                guard let encMgr = encryptionManager else {
+                    print("\n\(errorColor)⚠️  Skipping encrypted file \(file.path) - no encryption key available\(resetColor)")
+                    skippedEncrypted += 1
+                    await progress.fileSkipped()
+                    continue
+                }
+
+                // Download to temp location
+                let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("encrypted")
+
+                defer {
+                    try? FileManager.default.removeItem(at: tempURL)
+                }
+
+                try await client.downloadFileStreaming(fileName: remotePath, to: tempURL)
+
+                // Decrypt to final location
+                do {
+                    try encMgr.decryptFile(inputURL: tempURL, outputURL: localPath)
+                } catch {
+                    print("\n\(errorColor)✗ Failed to decrypt \(file.path): \(error)\(resetColor)")
+                    await progress.fileFailed()
+                    continue
+                }
+            } else {
+                // Direct download for unencrypted files
+                try await client.downloadFileStreaming(fileName: remotePath, to: localPath)
+            }
 
             try FileManager.default.setAttributes(
                 [.modificationDate: file.modificationDate],
@@ -3035,6 +3558,11 @@ func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remoteP
     }
 
     await progress.printFinal()
+
+    if skippedEncrypted > 0 {
+        print("\n\(errorColor)⚠️  Skipped \(skippedEncrypted) encrypted file(s) - encryption key not available\(resetColor)")
+        print("  \(dimColor)Configure encryption in your config file and try again\(resetColor)")
+    }
 }
 
 func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false) async throws {
@@ -3042,6 +3570,12 @@ func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
+
+    // Initialize encryption manager if encryption enabled
+    var encryptionManager: EncryptionManager?
+    if let encryptionConfig = config.encryption, encryptionConfig.enabled == true {
+        encryptionManager = EncryptionManager(config: encryptionConfig)
+    }
 
     if dryRun {
         print("\n\(boldColor)Starting restore (DRY RUN - no changes will be made)\(resetColor)")
@@ -3106,7 +3640,8 @@ func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false
         remotePrefix: remotePrefix,
         snapshot: snapshot,
         outputDir: outputDir,
-        progress: progress
+        progress: progress,
+        encryptionManager: encryptionManager
     )
 
     print("  \(localColor)✅ Restore complete!\(resetColor)\n")
