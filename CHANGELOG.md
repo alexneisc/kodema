@@ -2,9 +2,33 @@
 
 All notable changes to Kodema will be documented in this file.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2025-12-03
 
-### Added - Path Length Validation
+### Added - Encryption, Individual Files, and Path Validation
+
+#### Client-Side Encryption
+- **AES-256-CBC encryption** - Files encrypted before upload to B2
+- **Three key management methods**:
+  - **Keychain** - Secure storage in macOS Keychain (recommended for single-user)
+  - **File** - Store key in file for sharing across machines
+  - **Passphrase** - Interactive prompt on each backup/restore
+- **Optional filename encryption** - Hide file structure from B2 (`encryptFilenames: true`)
+- **Streaming encryption** - 8MB chunks, no RAM limits regardless of file size
+- **Mixed backup support** - Encrypted and plain files can coexist in same backup
+- **Smart restore** - Automatically skips encrypted files if key unavailable with warning
+- **Per-file tracking** - FileVersionInfo tracks encryption status for each file
+- **`.encrypted` extension** - Encrypted files marked clearly in B2 storage
+- **Key generation** - Automatic key generation and secure storage on first use
+- **PBKDF2 key derivation** - Passphrase-based encryption uses secure key derivation
+- **Terminal password input** - Secure password input with echo disabled
+- RNCryptor library integration for robust encryption implementation
+
+#### Individual File Backup Support
+- **Backup specific files** - Not just folders, can backup individual files
+- **New `files` config** - Add `include.files: []` array to configuration
+- **Mixed includes** - Combine folders and files in same backup config
+- **File scanning** - New `scanFile()` function for individual file handling
+- **Use cases**: SSH configs, shell configs, important documents, database files
 
 #### Path Length Validation & Handling
 - **B2 path limit enforcement** - Validates file paths against B2's 1000-byte limit
@@ -21,29 +45,70 @@ All notable changes to Kodema will be documented in this file.
 
 ### Changed
 
+#### Configuration Structure
+- **New encryption section** - `encryption:` with enabled, keySource, keyFile, keychainAccount, encryptFilenames
+- **Enhanced include section** - Now supports both `folders:` and `files:` arrays
+- **Encryption is optional** - All encryption features are opt-in via config
+
+#### Build System Improvements
+- **`make resolve`** - New target for explicit dependency resolution
+- **`make test`** - Updated with placeholder message (tests require refactoring)
+- **Enhanced help** - Updated make help with new resolve target
+
 #### Documentation Improvements
+- **Encryption documentation** - Comprehensive guides in README, BACKUP_GUIDE, FAQ, config.example.yml
+- **Individual files examples** - Added examples and use cases across all docs
 - **Path length documentation** - Added comprehensive troubleshooting in BACKUP_GUIDE and FAQ
 - **Path length solutions** - Examples of excludeGlobs patterns and finding problematic files
-- **CLAUDE.md updates** - Added path length validation details and common pitfalls section
+- **CLAUDE.md updates** - Added encryption, individual files, path length validation details
 
 ### Technical Details
+
+**New Dependencies:**
+- **RNCryptor** (5.2.0) - AES-256-CBC encryption library
+
+**New Data Structures:**
+- `EncryptionConfig` - Configuration for encryption settings
+- `EncryptionKeySource` - Enum for key source types (keychain, file, passphrase)
+- `EncryptionManager` - Complete encryption manager class (~180 lines)
+- Updated `FileVersionInfo` - Added encrypted, encryptedPath, encryptedSize fields
+- Updated `IncludeConfig` - Added `files: [String]?` array
+
+**New Functions:**
+- `EncryptionManager.getEncryptionKey()` - Unified key retrieval with caching
+- `EncryptionManager.getKeyFromKeychain()` - Keychain key management
+- `EncryptionManager.getKeyFromFile()` - File-based key management
+- `EncryptionManager.getKeyFromPassphrase()` - Interactive passphrase input
+- `EncryptionManager.deriveKeyFromPassphrase()` - PBKDF2 key derivation
+- `EncryptionManager.storeKeyInKeychain()` - Store key in macOS Keychain
+- `EncryptionManager.generateAndStoreKey()` - Generate new encryption key
+- `EncryptionManager.encryptFile()` - Streaming file encryption (8MB chunks)
+- `EncryptionManager.decryptFile()` - Streaming file decryption (8MB chunks)
+- `EncryptionManager.encryptFilename()` - Filename encryption with Base64 URL-safe
+- `EncryptionManager.decryptFilename()` - Filename decryption
+- `scanFile()` - Scan individual file for backup
+- `buildFilesToScan()` - Build list of individual files from config
 
 **New Constants:**
 - `maxB2PathLength` - 950 bytes (safety margin below B2's 1000-byte limit)
 
 **Modified Functions:**
-- `runIncrementalBackup()` - Added path length validation before file upload (lines 2359-2367)
-- `testConfig()` - Added path length check during folder scanning (lines 2073-2078)
+- `runIncrementalBackup()` - Integrated encryption with temp file handling, path length validation
+- `downloadAndRestoreFiles()` - Integrated decryption with skip logic for missing keys
+- `testConfig()` - Added path length check during folder scanning
 - `ProgressTracker` - Added `skippedFiles` tracking and `fileSkipped()` method
 
 **Error Handling Strategy:**
 - Path length exceeded: Skip file with warning (separate from failures)
+- Encrypted file restore without key: Skip with warning and track count
 
 ### Documentation
-- Updated BACKUP_GUIDE.md with path length troubleshooting section
-- Updated FAQ.md with comprehensive path length solutions
-- Updated CLAUDE.md with path length validation details and common pitfalls
-- Updated test-config documentation to include path length checks
+- **README.md** - Added encryption setup guide, individual files examples
+- **BACKUP_GUIDE.md** - Added encryption best practices, individual files usage, path length troubleshooting
+- **FAQ.md** - Updated encryption Q&A from "planned" to implemented, path length solutions
+- **config.example.yml** - Comprehensive encryption examples for all three key sources
+- **CLAUDE.md** - Added encryption implementation details, individual files, path length validation
+- **Makefile** - Enhanced help with new resolve target
 
 ---
 
@@ -390,24 +455,6 @@ kodema restore --path folder1 --list-snapshots # Filter snapshots
 
 ### Supported Platforms
 - macOS 26.0+
-
----
-
-## Roadmap / Future Ideas
-
-### Planned Features
-- `kodema restore` command for easy file recovery
-- Encryption support (client-side encryption)
-
-### Under Consideration
-- `kodema verify` command to check backup integrity
-- Support for other storage backends (S3, Google Cloud, etc.)
-- Compression support (gzip/zstd before upload)
-- Bandwidth limiting
-- Parallel file uploads (improve `uploadConcurrency`)
-- Email notifications on completion/failure
-- SQLite cache for faster incremental checks
-- Integration with macOS Shortcuts
 
 ---
 
