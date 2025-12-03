@@ -218,6 +218,59 @@ ls -la ~/Documents
 
 Kodema needs read access to backup files.
 
+### Files skipped: "path too long"
+
+**What it means:**
+Backblaze B2 has a 1000-byte limit for file names. Files with very long paths are automatically skipped with a warning.
+
+**Example warning:**
+```
+⚠️  Skipping file with path too long (1039 bytes > 950 limit)
+   Path: backup/files/Documents/project/node_modules/.../file.txt/20250103_120000
+```
+
+**Why it happens:**
+- Deep folder structures (e.g., `node_modules`, nested projects)
+- Long folder/file names
+- Each backup path includes: `backup/files/` + your path + `/timestamp`
+
+**Solutions:**
+
+1. **Check before backup:**
+   ```bash
+   kodema test-config  # Shows count of files with long paths
+   ```
+
+2. **Exclude deep structures:**
+   ```yaml
+   filters:
+     excludeGlobs:
+       - "**/node_modules/**"    # npm dependencies
+       - "**/.git/objects/**"    # git internals
+       - "**/vendor/**"          # package managers
+   ```
+
+3. **Use shorter backup paths:**
+   ```yaml
+   # Instead of:
+   - ~/Documents/Work/Clients/CompanyName/Projects/ProjectName
+
+   # Use:
+   - ~/Documents/Work/Clients/CompanyName/Projects/ProjectName  # Backup this specific folder
+   ```
+
+4. **Find problematic files:**
+   ```bash
+   find ~/Documents -type f | awk 'length > 900 {print length, $0}' | sort -n
+   ```
+
+**What files are affected:**
+- Typically development dependencies (`node_modules`, `vendor`, `.git`)
+- Nested project structures
+- Very long filenames combined with deep folders
+
+**Good news:** Most important files (documents, photos, etc.) have short paths and won't be affected!
+
 ### Restore overwrites existing files
 
 By default, Kodema asks for confirmation. Use `--force` to skip:

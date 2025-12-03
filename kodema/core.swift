@@ -113,12 +113,17 @@ let resetColor = "\u{001B}[0m"
 let boldColor = "\u{001B}[1m"
 let dimColor = "\u{001B}[2m"
 
+// B2 limits: file name can be up to 1000 bytes (UTF-8)
+// Use 950 to leave some safety margin for encoding
+let maxB2PathLength = 950
+
 // MARK: - Progress Tracker
 
 actor ProgressTracker {
     private(set) var totalFiles: Int = 0
     private(set) var completedFiles: Int = 0
     private(set) var failedFiles: Int = 0
+    private(set) var skippedFiles: Int = 0
     private(set) var totalBytes: Int64 = 0
     private(set) var uploadedBytes: Int64 = 0
     private var currentFileName: String = ""
@@ -149,13 +154,18 @@ actor ProgressTracker {
         currentFileName = ""
     }
 
-    func currentProgress() -> (completed: Int, failed: Int, total: Int, uploadedBytes: Int64, totalBytes: Int64, currentFile: String, elapsed: TimeInterval) {
-        return (completedFiles, failedFiles, totalFiles, uploadedBytes, totalBytes, currentFileName, Date().timeIntervalSince(startTime))
+    func fileSkipped() {
+        skippedFiles += 1
+        currentFileName = ""
+    }
+
+    func currentProgress() -> (completed: Int, failed: Int, skipped: Int, total: Int, uploadedBytes: Int64, totalBytes: Int64, currentFile: String, elapsed: TimeInterval) {
+        return (completedFiles, failedFiles, skippedFiles, totalFiles, uploadedBytes, totalBytes, currentFileName, Date().timeIntervalSince(startTime))
     }
 
     func printProgress() {
-        let (completed, failed, total, uploaded, totalSize, currentFile, elapsed) = currentProgress()
-        let remaining = total - completed - failed
+        let (completed, failed, skipped, total, uploaded, totalSize, currentFile, elapsed) = currentProgress()
+        let remaining = total - completed - failed - skipped
         let percentage = totalSize > 0 ? Double(uploaded) / Double(totalSize) * 100 : 0
 
         // Progress bar
@@ -178,13 +188,17 @@ actor ProgressTracker {
 
         // Clear line and print progress bar
         print("\r\u{001B}[K", terminator: "")
-        print("\(boldColor)[\(bar)] \(String(format: "%.1f", percentage))%\(resetColor) | " +
+        var statusLine = "\(boldColor)[\(bar)] \(String(format: "%.1f", percentage))%\(resetColor) | " +
               "\(localColor)\(completed) ✅\(resetColor) " +
-              "\(errorColor)\(failed) ❌\(resetColor) " +
-              "\(dimColor)\(remaining) ⏳\(resetColor) | " +
+              "\(errorColor)\(failed) ❌\(resetColor) "
+        if skipped > 0 {
+            statusLine += "\(dimColor)\(skipped) ⏭️\(resetColor) "
+        }
+        statusLine += "\(dimColor)\(remaining) ⏳\(resetColor) | " +
               "\(uploadedStr)/\(totalStr) | " +
               "\(speedStr) | " +
-              "ETA: \(etaStr)", terminator: "")
+              "ETA: \(etaStr)"
+        print(statusLine, terminator: "")
 
         // Show current file on next line if exists
         if !currentFile.isEmpty {
@@ -200,7 +214,7 @@ actor ProgressTracker {
     }
 
     func printFinal() {
-        let (completed, failed, total, uploaded, totalSize, _, elapsed) = currentProgress()
+        let (completed, failed, skipped, total, uploaded, totalSize, _, elapsed) = currentProgress()
 
         // Show cursor again
         if cursorHidden {
@@ -213,6 +227,9 @@ actor ProgressTracker {
         print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)")
         print("  \(localColor)✅ Successful:\(resetColor) \(completed) files")
         print("  \(errorColor)❌ Failed:\(resetColor) \(failed) files")
+        if skipped > 0 {
+            print("  \(dimColor)⏭️  Skipped:\(resetColor) \(skipped) files (path too long)")
+        }
         print("  📦 Uploaded: \(formatBytes(uploaded)) of \(formatBytes(totalSize))")
         print("  ⏱️ Time: \(formatDuration(elapsed))")
         if elapsed > 0 {
@@ -2012,6 +2029,11 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
     var totalFiles = 0
     var totalBytes: Int64 = 0
     var icloudNotDownloaded = 0
+    var longPathFiles = 0
+
+    let remotePrefix = config.backup?.remotePrefix ?? "backup"
+    let timestamp = "20250101_000000"  // Sample timestamp for path length calculation
+    let folderURLs = folders.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
 
     for folder in folders {
         let expandedPath = NSString(string: folder).expandingTildeInPath
@@ -2025,17 +2047,18 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
             var folderICloudNotDownloaded = 0
 
             // Use a synchronous approach for file enumeration
-            let scanResult: (Int, Int64, Int) = {
+            let scanResult: (Int, Int64, Int, Int) = {
                 var files = 0
                 var bytes: Int64 = 0
                 var notDownloaded = 0
+                var longPaths = 0
 
                 guard let enumerator = fm.enumerator(
                     at: folderURL,
                     includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey],
                     options: [.skipsHiddenFiles]
                 ) else {
-                    return (0, 0, 0)
+                    return (0, 0, 0, 0)
                 }
 
                 for case let fileURL as URL in enumerator {
@@ -2045,6 +2068,13 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
                         files += 1
                         if let size = resourceValues.fileSize {
                             bytes += Int64(size)
+                        }
+
+                        // Check path length
+                        let relativePath = buildRelativePath(for: fileURL, from: folderURLs)
+                        let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+                        if versionPath.utf8.count > maxB2PathLength {
+                            longPaths += 1
                         }
 
                         // Check iCloud status
@@ -2058,16 +2088,18 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
                     }
                 }
 
-                return (files, bytes, notDownloaded)
+                return (files, bytes, notDownloaded, longPaths)
             }()
 
             folderFiles = scanResult.0
             folderBytes = scanResult.1
             folderICloudNotDownloaded = scanResult.2
+            let folderLongPaths = scanResult.3
 
             totalFiles += folderFiles
             totalBytes += folderBytes
             icloudNotDownloaded += folderICloudNotDownloaded
+            longPathFiles += folderLongPaths
 
             print("  \(localColor)✓\(resetColor) \(folder) (\(folderFiles) files, \(formatBytes(folderBytes)))")
         } else {
@@ -2080,6 +2112,13 @@ func testConfig(config: AppConfig, configURL: URL) async throws {
     if icloudNotDownloaded > 0 {
         print("  \(errorColor)⚠\(resetColor)  iCloud: \(icloudNotDownloaded) files not yet downloaded locally")
         print("    These will be downloaded automatically during backup")
+        hasWarnings = true
+    }
+
+    if longPathFiles > 0 {
+        print("  \(errorColor)⚠\(resetColor)  Path length: \(longPathFiles) files have paths longer than \(maxB2PathLength) bytes")
+        print("    These files will be skipped during backup due to B2 limits")
+        print("    Consider using excludeGlobs to filter out deep folder structures")
         hasWarnings = true
     }
 
@@ -2338,6 +2377,17 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
 
             // Upload to versioned path
             let versionPath = "\(remotePrefix)/files/\(relativePath)/\(timestamp)"
+
+            // Check if path length exceeds B2 limit
+            let pathByteCount = versionPath.utf8.count
+            if pathByteCount > maxB2PathLength {
+                print("  \(errorColor)⚠️  Skipping file with path too long (\(pathByteCount) bytes > \(maxB2PathLength) limit)\(resetColor)")
+                print("  \(dimColor)   Path: \(versionPath)\(resetColor)")
+                await progress.fileSkipped()
+                await progress.printProgress()
+                continue
+            }
+
             let contentType = guessContentType(for: url)
             let size = file.size ?? (fileSize(url: url) ?? 0)
             let mtime = file.modificationDate ?? Date()

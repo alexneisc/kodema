@@ -128,7 +128,9 @@ kodema backup
 
 **Progress Tracking (lines 96-239)**
 - `ProgressTracker` actor: Thread-safe progress state
+- Tracks completed, failed, and skipped files
 - ANSI terminal UI: progress bar, speed, ETA, current file
+- Displays skipped files (e.g., path too long) in progress and final summary
 - Cursor management: hides cursor during progress, restores on exit/error
 - **Graceful Shutdown** (lines 1266-1298): Signal handlers for SIGINT/SIGTERM
   - Sets global flag instead of immediate exit
@@ -136,6 +138,13 @@ kodema backup
   - Saves partial manifest with progress
   - Shows cursor and exits cleanly with appropriate exit code
   - Preserves all uploaded files for resume on next backup
+
+**Path Length Validation (lines 118, 2359-2367)**
+- `maxB2PathLength` constant: 950 bytes (safety margin below B2's 1000-byte limit)
+- Before upload, checks if `versionPath.utf8.count > maxB2PathLength`
+- Files with paths exceeding limit are skipped with warning message
+- Skipped files tracked separately from failed files
+- Common in deep folder structures (node_modules, .git, nested projects)
 
 ### Command Flow
 
@@ -161,14 +170,16 @@ kodema backup
 4. Count files and calculate total size
 5. Detect iCloud files not yet downloaded locally
 6. Check available disk space and warn if insufficient for iCloud downloads
-7. Display all configuration settings (filters, retention, performance, timeouts)
-8. Show summary with total files and estimated size
+7. **Check path lengths** - detects files with paths exceeding B2 limit (950 bytes)
+8. Display all configuration settings (filters, retention, performance, timeouts)
+9. Show summary with total files and estimated size
 - Supports custom config via `--config` or `-c` flag
 - No modifications made to local files or remote B2 bucket
 - Exits with error if configuration has issues (missing folders, auth failure, etc.)
-- Shows warnings for potential issues (iCloud files not downloaded, low disk space)
+- Shows warnings for potential issues (iCloud files not downloaded, low disk space, long paths)
 - Useful for validating config before first backup or after making changes
 - Disk space check: requires 20% buffer above file size for safety
+- Path length check: simulates full B2 path to detect potential skips before backup
 
 **`kodema backup [--config <path>] [--dry-run]` (lines 1914-2124)**
 1. Scan local files and apply filters
@@ -178,9 +189,11 @@ kodema backup
 5. Sort files (local first, then iCloud)
 6. Upload initial manifest to B2 (establishes snapshot immediately)
 7. Upload changed files with progress tracking
+   - **Path length validation**: Skips files with paths >950 bytes (B2 limit)
    - For iCloud files: checks available disk space before downloading (requires 20% buffer)
    - Skips files if insufficient disk space with warning message
    - Checks for shutdown request before each file (graceful shutdown support)
+   - Skipped files (long paths, no disk space) tracked separately from failed files
 8. Incrementally update manifest every N files (prevents orphaned files on interruption)
 9. Upload final manifest with deleted files filtered
 10. Upload success marker to indicate backup completed successfully (skipped if shutdown requested)
@@ -362,3 +375,5 @@ Package definition: `Package.swift` (in repository root)
 9. **Sequential Downloads**: Restore downloads files one at a time - no parallelization (avoids B2 rate limits but slower for many small files)
 
 10. **Manifest Update Frequency**: Low `manifestUpdateInterval` values (e.g., <10) increase B2 API calls and may slow down backup. High values (e.g., >100) mean more orphaned files if backup is interrupted. Default of 50 is a good balance.
+
+11. **Path Length Limits**: B2 has 1000-byte limit for file names. Kodema uses 950-byte limit (safety margin). Files with longer paths (common in `node_modules`, nested projects) are automatically skipped with warning. Use `kodema test-config` to detect these before backup. Recommend using `excludeGlobs` to filter deep folder structures: `**/node_modules/**`, `**/.git/**`, `**/vendor/**`.

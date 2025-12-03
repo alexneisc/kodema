@@ -167,6 +167,7 @@ Tests and validates your configuration before running backups. This command chec
 - 📊 **Size calculation** - Counts files and calculates total size
 - ☁️ **iCloud detection** - Identifies files not yet downloaded locally
 - 💾 **Disk space check** - Verifies enough space for iCloud downloads
+- 📏 **Path length check** - Detects files with paths exceeding B2 limits (950 bytes)
 - ⚙️ **Settings display** - Shows all configuration settings
 
 **Usage:**
@@ -195,6 +196,7 @@ Folders to Backup:
   ✓ ~/Documents (1,234 files, 2.3 GB)
   ✓ ~/Desktop (89 files, 456 MB)
   ⚠  iCloud: 23 files not yet downloaded locally
+  ⚠  Path length: 2 files have paths longer than 950 bytes
 
 Disk Space:
   ✓ Available: 45.2 GB
@@ -203,6 +205,7 @@ Summary:
   • Total files to scan: ~1,323 files
   • Estimated size: ~2.7 GB
   • iCloud files may need download during backup
+  • Files with long paths will be skipped
 ```
 
 **When to use:**
@@ -407,15 +410,17 @@ backup:
 ```
 Adjust based on your needs and B2 storage costs.
 
-### 6. Use Filters to Exclude Junk
+### 6. Use Filters to Exclude Junk and Deep Structures
 ```yaml
 filters:
   excludeGlobs:
     - "*.tmp"
     - "**/.DS_Store"
-    - "**/node_modules/**"
-    - "**/.git/**"
+    - "**/node_modules/**"    # Deep dependency trees
+    - "**/.git/**"            # Git internals
+    - "**/vendor/**"          # PHP/Ruby dependencies
 ```
+**Tip:** Deep folder structures (like `node_modules`) can create paths longer than B2's 1000-byte limit. Use `kodema test-config` to detect these before backup.
 
 ### 7. Schedule Regular Backups
 ```bash
@@ -452,6 +457,43 @@ filters:
 ### Too Many Versions
 - Adjust retention policy to be more aggressive
 - Run `kodema cleanup` more frequently
+
+### Files Skipped (Path Too Long)
+**Problem:** Some files have paths longer than 950 bytes and are being skipped.
+
+**Why it happens:**
+- Backblaze B2 has a 1000-byte limit for file names
+- Deep folder structures (e.g., `node_modules`, nested projects) can exceed this
+- Each file path includes: `backup/files/` + your relative path + `/timestamp`
+
+**Solutions:**
+1. **Use excludeGlobs to filter out deep structures:**
+   ```yaml
+   filters:
+     excludeGlobs:
+       - "**/node_modules/**"
+       - "**/.git/objects/**"
+       - "**/vendor/**"
+   ```
+
+2. **Backup from a shorter root path:**
+   ```yaml
+   # Instead of:
+   - ~/Documents/Projects/Client/ProjectName/...
+
+   # Use:
+   - ~/Documents/Projects/Client/ProjectName
+   ```
+
+3. **Check before backup:**
+   ```bash
+   kodema test-config  # Shows warning about long paths
+   ```
+
+4. **Find long paths manually:**
+   ```bash
+   find ~/Documents -type f | awk 'length > 900 {print length, $0}' | sort -n
+   ```
 
 ---
 

@@ -2,6 +2,51 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.7.0] - Unreleased
+
+### Added - Path Length Validation
+
+#### Path Length Validation & Handling
+- **B2 path limit enforcement** - Validates file paths against B2's 1000-byte limit
+- **Conservative threshold** - Uses 950-byte limit (safety margin for encoding)
+- **Pre-backup detection** - `test-config` scans and warns about long paths before backup
+- **Runtime validation** - Checks path length before each file upload during backup
+- **Automatic skip** - Files with long paths skipped with clear warning messages
+- **Separate tracking** - Skipped files tracked separately from failed files in progress
+- **Progress indicator** - Shows skipped count in progress bar (⏭️) and final summary
+- **Warning examples** - "Skipping file with path too long (1039 bytes > 950 limit)"
+- **Common causes** - Deep folder structures (node_modules, .git, nested projects)
+- **Recommended fix** - Use excludeGlobs to filter deep structures: `**/node_modules/**`, `**/.git/**`
+- Prevents backup failures and provides clear guidance on problematic files
+
+### Changed
+
+#### Documentation Improvements
+- **Path length documentation** - Added comprehensive troubleshooting in BACKUP_GUIDE and FAQ
+- **Path length solutions** - Examples of excludeGlobs patterns and finding problematic files
+- **CLAUDE.md updates** - Added path length validation details and common pitfalls section
+
+### Technical Details
+
+**New Constants:**
+- `maxB2PathLength` - 950 bytes (safety margin below B2's 1000-byte limit)
+
+**Modified Functions:**
+- `runIncrementalBackup()` - Added path length validation before file upload (lines 2359-2367)
+- `testConfig()` - Added path length check during folder scanning (lines 2073-2078)
+- `ProgressTracker` - Added `skippedFiles` tracking and `fileSkipped()` method
+
+**Error Handling Strategy:**
+- Path length exceeded: Skip file with warning (separate from failures)
+
+### Documentation
+- Updated BACKUP_GUIDE.md with path length troubleshooting section
+- Updated FAQ.md with comprehensive path length solutions
+- Updated CLAUDE.md with path length validation details and common pitfalls
+- Updated test-config documentation to include path length checks
+
+---
+
 ## [0.6.0] - 2025-12-03
 
 ### Added - Configuration Validation & Resource Management
