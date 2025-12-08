@@ -485,12 +485,29 @@ encryption:
 - For file-based: save `~/.config/kodema/encryption-key.bin` securely
 - Filename encryption (`encryptFilenames: true`) hides file structure from B2
 
-**Generate and store encryption key:**
+**Generate encryption key:**
+
+The encryption key is automatically generated on first backup. However, you can also generate it manually:
+
 ```bash
-# The key will be automatically generated on first backup
-# For keychain source, it's stored securely in macOS Keychain
-# For file source, save the generated key file safely
+# For file-based key storage (32 bytes = 256 bits for AES-256)
+mkdir -p ~/.config/kodema
+openssl rand -out ~/.config/kodema/encryption-key.bin 32
+
+# Verify key was created
+ls -lh ~/.config/kodema/encryption-key.bin
+# Should show: -rw-r--r-- 1 user staff 32B
 ```
+
+**Key storage by source type:**
+- **Keychain**: Key auto-generated and stored securely in macOS Keychain on first backup
+- **File**: Generate manually (see above) or auto-generated on first backup at `keyFile` location
+- **Passphrase**: Derived from your passphrase using PBKDF2 (prompted interactively)
+
+**Important:**
+- Keep the key file safe! Without it, backups are unrecoverable
+- For file-based keys, back up `~/.config/kodema/encryption-key.bin` separately
+- Never commit the key file to git or share it insecurely
 
 ---
 
