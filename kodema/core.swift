@@ -718,7 +718,9 @@ func sha1HexStream(fileURL: URL, bufferSize: Int = 8 * 1024 * 1024) throws -> St
 
 class EncryptionManager {
     let config: EncryptionConfig
-    private var cachedKey: Data?
+    private var cachedEncryptionKey: Data?
+    private var cachedHmacKey: Data?
+    private var cachedPassphrase: String?
     private let chunkSize = 8 * 1024 * 1024  // 8MB chunks
 
     init(config: EncryptionConfig) {
@@ -727,72 +729,42 @@ class EncryptionManager {
 
     // MARK: - Key Management
 
-    func getEncryptionKey() throws -> Data {
-        if let cached = cachedKey {
-            return cached
+    // Get both encryption and HMAC keys (for key-based encryption)
+    func getEncryptionKeys() throws -> (encryptionKey: Data, hmacKey: Data) {
+        if let encKey = cachedEncryptionKey, let hmacKey = cachedHmacKey {
+            return (encKey, hmacKey)
         }
 
         guard let keySource = config.keySource else {
             throw EncryptionError.invalidConfiguration("No key source specified")
         }
 
-        let key: Data
+        let keys: (Data, Data)
         switch keySource {
         case .keychain:
-            key = try getKeyFromKeychain()
+            keys = try getKeysFromKeychain()
         case .file:
-            key = try getKeyFromFile()
+            keys = try getKeysFromFile()
         case .passphrase:
-            key = try getKeyFromPassphrase()
+            // For passphrase, we'll use password-based encryption instead
+            throw EncryptionError.invalidConfiguration("Use getPassphrase() for passphrase-based encryption")
         }
 
-        cachedKey = key
-        return key
+        cachedEncryptionKey = keys.0
+        cachedHmacKey = keys.1
+        return keys
     }
 
-    private func getKeyFromKeychain() throws -> Data {
-        let account = config.keychainAccount ?? "kodema-encryption-key"
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess, let keyData = result as? Data else {
-            if status == errSecItemNotFound {
-                throw EncryptionError.keyNotFound
-            }
-            throw EncryptionError.keychainError("Failed to retrieve key: \(status)")
+    // Get passphrase (for password-based encryption)
+    func getPassphrase() throws -> String {
+        if let cached = cachedPassphrase {
+            return cached
         }
 
-        return keyData
-    }
-
-    private func getKeyFromFile() throws -> Data {
-        guard let keyFile = config.keyFile else {
-            throw EncryptionError.invalidConfiguration("Key file path not specified")
+        guard config.keySource == .passphrase else {
+            throw EncryptionError.invalidConfiguration("Passphrase only available with passphrase key source")
         }
 
-        let expandedPath = NSString(string: keyFile).expandingTildeInPath
-        let fileURL = URL(fileURLWithPath: expandedPath)
-
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            throw EncryptionError.keyNotFound
-        }
-
-        let keyData = try Data(contentsOf: fileURL)
-        guard !keyData.isEmpty else {
-            throw EncryptionError.invalidKey
-        }
-
-        return keyData
-    }
-
-    private func getKeyFromPassphrase() throws -> Data {
         // Prompt user for passphrase
         print("Enter encryption passphrase: ", terminator: "")
         fflush(stdout)
@@ -810,102 +782,183 @@ class EncryptionManager {
             print()  // New line after password
         }
 
-        guard let passphrase = readLine() else {
+        guard let passphrase = readLine(), !passphrase.isEmpty else {
             throw EncryptionError.passphraseRequired
         }
 
-        guard !passphrase.isEmpty else {
-            throw EncryptionError.passphraseRequired
-        }
-
-        // Derive key from passphrase using PBKDF2
-        // RNCryptor uses 32-byte keys for AES-256
-        return try deriveKeyFromPassphrase(passphrase)
+        cachedPassphrase = passphrase
+        return passphrase
     }
 
-    private func deriveKeyFromPassphrase(_ passphrase: String) throws -> Data {
-        // Use PBKDF2 to derive a key from the passphrase
-        // RNCryptor uses 10,000 iterations by default
-        let salt = "kodema-encryption-salt".data(using: .utf8)!
-        let iterations: UInt32 = 10000
-        let keyLength = 32  // 256 bits for AES-256
+    private func getKeysFromKeychain() throws -> (Data, Data) {
+        let encAccount = config.keychainAccount ?? "kodema-encryption-key"
+        let hmacAccount = (config.keychainAccount ?? "kodema-encryption-key") + "-hmac"
 
-        var derivedKey = Data(count: keyLength)
-        let result = derivedKey.withUnsafeMutableBytes { derivedKeyBytes in
-            salt.withUnsafeBytes { saltBytes in
-                CCKeyDerivationPBKDF(
-                    CCPBKDFAlgorithm(kCCPBKDF2),
-                    passphrase,
-                    passphrase.utf8.count,
-                    saltBytes.bindMemory(to: UInt8.self).baseAddress,
-                    salt.count,
-                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
-                    iterations,
-                    derivedKeyBytes.bindMemory(to: UInt8.self).baseAddress,
-                    keyLength
-                )
-            }
-        }
-
-        guard result == kCCSuccess else {
-            throw EncryptionError.encryptionFailed("Key derivation failed")
-        }
-
-        return derivedKey
-    }
-
-    func storeKeyInKeychain(_ key: Data, account: String? = nil) throws {
-        let accountName = account ?? config.keychainAccount ?? "kodema-encryption-key"
-
-        let query: [String: Any] = [
+        // Get encryption key
+        let encQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: accountName,
-            kSecValueData as String: key
+            kSecAttrAccount as String: encAccount,
+            kSecReturnData as String: true
         ]
 
-        // Try to add, if exists, update
-        var status = SecItemAdd(query as CFDictionary, nil)
+        var encResult: AnyObject?
+        var status = SecItemCopyMatching(encQuery as CFDictionary, &encResult)
+
+        guard status == errSecSuccess, let encKeyData = encResult as? Data else {
+            if status == errSecItemNotFound {
+                throw EncryptionError.keyNotFound
+            }
+            throw EncryptionError.keychainError("Failed to retrieve encryption key: \(status)")
+        }
+
+        // Get HMAC key
+        let hmacQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: hmacAccount,
+            kSecReturnData as String: true
+        ]
+
+        var hmacResult: AnyObject?
+        status = SecItemCopyMatching(hmacQuery as CFDictionary, &hmacResult)
+
+        guard status == errSecSuccess, let hmacKeyData = hmacResult as? Data else {
+            if status == errSecItemNotFound {
+                throw EncryptionError.keyNotFound
+            }
+            throw EncryptionError.keychainError("Failed to retrieve HMAC key: \(status)")
+        }
+
+        return (encKeyData, hmacKeyData)
+    }
+
+    private func getKeysFromFile() throws -> (Data, Data) {
+        guard let keyFile = config.keyFile else {
+            throw EncryptionError.invalidConfiguration("Key file path not specified")
+        }
+
+        let expandedPath = NSString(string: keyFile).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: expandedPath)
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw EncryptionError.keyNotFound
+        }
+
+        let keyData = try Data(contentsOf: fileURL)
+        // Expect 64 bytes: 32 for encryption key + 32 for HMAC key
+        guard keyData.count == 64 else {
+            throw EncryptionError.invalidKey
+        }
+
+        let encryptionKey = keyData.prefix(32)
+        let hmacKey = keyData.suffix(32)
+
+        return (Data(encryptionKey), Data(hmacKey))
+    }
+
+    func storeKeysInKeychain(encryptionKey: Data, hmacKey: Data) throws {
+        let encAccount = config.keychainAccount ?? "kodema-encryption-key"
+        let hmacAccount = (config.keychainAccount ?? "kodema-encryption-key") + "-hmac"
+
+        // Store encryption key
+        let encQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: encAccount,
+            kSecValueData as String: encryptionKey
+        ]
+
+        var status = SecItemAdd(encQuery as CFDictionary, nil)
         if status == errSecDuplicateItem {
             let updateQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
-                kSecAttrAccount as String: accountName
+                kSecAttrAccount as String: encAccount
             ]
             let attributes: [String: Any] = [
-                kSecValueData as String: key
+                kSecValueData as String: encryptionKey
             ]
             status = SecItemUpdate(updateQuery as CFDictionary, attributes as CFDictionary)
         }
 
         guard status == errSecSuccess else {
-            throw EncryptionError.keychainError("Failed to store key: \(status)")
+            throw EncryptionError.keychainError("Failed to store encryption key: \(status)")
+        }
+
+        // Store HMAC key
+        let hmacQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: hmacAccount,
+            kSecValueData as String: hmacKey
+        ]
+
+        status = SecItemAdd(hmacQuery as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            let updateQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrAccount as String: hmacAccount
+            ]
+            let attributes: [String: Any] = [
+                kSecValueData as String: hmacKey
+            ]
+            status = SecItemUpdate(updateQuery as CFDictionary, attributes as CFDictionary)
+        }
+
+        guard status == errSecSuccess else {
+            throw EncryptionError.keychainError("Failed to store HMAC key: \(status)")
         }
     }
 
-    func generateAndStoreKey() throws -> Data {
-        // Generate a random 256-bit key
-        var keyData = Data(count: 32)
-        let result = keyData.withUnsafeMutableBytes {
+    func generateAndStoreKeys() throws -> (Data, Data) {
+        // Generate two random 256-bit keys
+        var encryptionKey = Data(count: 32)
+        var hmacKey = Data(count: 32)
+
+        var result = encryptionKey.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!)
         }
 
         guard result == errSecSuccess else {
-            throw EncryptionError.encryptionFailed("Failed to generate random key")
+            throw EncryptionError.encryptionFailed("Failed to generate encryption key")
         }
 
-        // Store in keychain if using keychain
+        result = hmacKey.withUnsafeMutableBytes {
+            SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!)
+        }
+
+        guard result == errSecSuccess else {
+            throw EncryptionError.encryptionFailed("Failed to generate HMAC key")
+        }
+
+        // Store keys based on key source
         if config.keySource == .keychain {
-            try storeKeyInKeychain(keyData)
+            try storeKeysInKeychain(encryptionKey: encryptionKey, hmacKey: hmacKey)
+        } else if config.keySource == .file {
+            // Store in file (64 bytes: 32 encryption + 32 HMAC)
+            guard let keyFile = config.keyFile else {
+                throw EncryptionError.invalidConfiguration("Key file path not specified")
+            }
+
+            let expandedPath = NSString(string: keyFile).expandingTildeInPath
+            let fileURL = URL(fileURLWithPath: expandedPath)
+
+            // Create directory if needed
+            let directory = fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+            // Combine both keys into single 64-byte file
+            var combinedKeys = Data()
+            combinedKeys.append(encryptionKey)
+            combinedKeys.append(hmacKey)
+
+            try combinedKeys.write(to: fileURL, options: .atomic)
         }
 
-        cachedKey = keyData
-        return keyData
+        cachedEncryptionKey = encryptionKey
+        cachedHmacKey = hmacKey
+        return (encryptionKey, hmacKey)
     }
 
     // MARK: - File Encryption/Decryption
 
     func encryptFile(inputURL: URL, outputURL: URL) throws -> Int64 {
-        let key = try getEncryptionKey()
-
         guard let inputStream = InputStream(url: inputURL) else {
             throw EncryptionError.encryptionFailed("Cannot open input file")
         }
@@ -922,52 +975,93 @@ class EncryptionManager {
             outputStream.close()
         }
 
-        // Create RNCryptor encryptor
-        var encryptor = RNCryptor.Encryptor(password: String(data: key, encoding: .utf8) ?? "")
-
-        var buffer = [UInt8](repeating: 0, count: chunkSize)
+        // Encrypt based on key source
         var totalBytesWritten: Int64 = 0
 
-        while inputStream.hasBytesAvailable {
-            let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
-            if bytesRead < 0 {
-                throw EncryptionError.encryptionFailed("Read error")
-            } else if bytesRead == 0 {
-                break
+        if config.keySource == .passphrase {
+            // Password-based encryption
+            let passphrase = try getPassphrase()
+            var encryptor = RNCryptor.Encryptor(password: passphrase)
+            var buffer = [UInt8](repeating: 0, count: chunkSize)
+
+            while inputStream.hasBytesAvailable {
+                let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+                if bytesRead < 0 {
+                    throw EncryptionError.encryptionFailed("Read error")
+                } else if bytesRead == 0 {
+                    break
+                }
+
+                let chunk = Data(bytes: buffer, count: bytesRead)
+                let encryptedChunk = encryptor.update(withData: chunk)
+
+                if !encryptedChunk.isEmpty {
+                    let bytesWritten = encryptedChunk.withUnsafeBytes { ptr in
+                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: encryptedChunk.count)
+                    }
+                    if bytesWritten < 0 {
+                        throw EncryptionError.encryptionFailed("Write error")
+                    }
+                    totalBytesWritten += Int64(bytesWritten)
+                }
             }
 
-            let chunk = Data(bytes: buffer, count: bytesRead)
-            let encryptedChunk = encryptor.update(withData: chunk)
-
-            if !encryptedChunk.isEmpty {
-                let bytesWritten = encryptedChunk.withUnsafeBytes { ptr in
-                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: encryptedChunk.count)
+            // Finalize encryption
+            let finalData = encryptor.finalData()
+            if !finalData.isEmpty {
+                let bytesWritten = finalData.withUnsafeBytes { ptr in
+                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
                 }
                 if bytesWritten < 0 {
-                    throw EncryptionError.encryptionFailed("Write error")
+                    throw EncryptionError.encryptionFailed("Write error on finalization")
                 }
                 totalBytesWritten += Int64(bytesWritten)
             }
-        }
+        } else {
+            // Key-based encryption
+            let (encryptionKey, hmacKey) = try getEncryptionKeys()
+            var encryptor = RNCryptor.EncryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
+            var buffer = [UInt8](repeating: 0, count: chunkSize)
 
-        // Finalize encryption
-        let finalData = encryptor.finalData()
-        if !finalData.isEmpty {
-            let bytesWritten = finalData.withUnsafeBytes { ptr in
-                outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+            while inputStream.hasBytesAvailable {
+                let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+                if bytesRead < 0 {
+                    throw EncryptionError.encryptionFailed("Read error")
+                } else if bytesRead == 0 {
+                    break
+                }
+
+                let chunk = Data(bytes: buffer, count: bytesRead)
+                let encryptedChunk = encryptor.update(withData: chunk)
+
+                if !encryptedChunk.isEmpty {
+                    let bytesWritten = encryptedChunk.withUnsafeBytes { ptr in
+                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: encryptedChunk.count)
+                    }
+                    if bytesWritten < 0 {
+                        throw EncryptionError.encryptionFailed("Write error")
+                    }
+                    totalBytesWritten += Int64(bytesWritten)
+                }
             }
-            if bytesWritten < 0 {
-                throw EncryptionError.encryptionFailed("Write error on finalization")
+
+            // Finalize encryption
+            let finalData = encryptor.finalData()
+            if !finalData.isEmpty {
+                let bytesWritten = finalData.withUnsafeBytes { ptr in
+                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+                }
+                if bytesWritten < 0 {
+                    throw EncryptionError.encryptionFailed("Write error on finalization")
+                }
+                totalBytesWritten += Int64(bytesWritten)
             }
-            totalBytesWritten += Int64(bytesWritten)
         }
 
         return totalBytesWritten
     }
 
     func decryptFile(inputURL: URL, outputURL: URL) throws {
-        let key = try getEncryptionKey()
-
         guard let inputStream = InputStream(url: inputURL) else {
             throw EncryptionError.decryptionFailed("Cannot open input file")
         }
@@ -984,60 +1078,115 @@ class EncryptionManager {
             outputStream.close()
         }
 
-        // Create RNCryptor decryptor
-        var decryptor = RNCryptor.Decryptor(password: String(data: key, encoding: .utf8) ?? "")
+        // Decrypt based on key source
+        if config.keySource == .passphrase {
+            // Password-based decryption
+            let passphrase = try getPassphrase()
+            var decryptor = RNCryptor.Decryptor(password: passphrase)
+            var buffer = [UInt8](repeating: 0, count: chunkSize)
 
-        var buffer = [UInt8](repeating: 0, count: chunkSize)
+            while inputStream.hasBytesAvailable {
+                let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+                if bytesRead < 0 {
+                    throw EncryptionError.decryptionFailed("Read error")
+                } else if bytesRead == 0 {
+                    break
+                }
 
-        while inputStream.hasBytesAvailable {
-            let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
-            if bytesRead < 0 {
-                throw EncryptionError.decryptionFailed("Read error")
-            } else if bytesRead == 0 {
-                break
+                let chunk = Data(bytes: buffer, count: bytesRead)
+                do {
+                    let decryptedChunk = try decryptor.update(withData: chunk)
+
+                    if !decryptedChunk.isEmpty {
+                        let bytesWritten = decryptedChunk.withUnsafeBytes { ptr in
+                            outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: decryptedChunk.count)
+                        }
+                        if bytesWritten < 0 {
+                            throw EncryptionError.decryptionFailed("Write error")
+                        }
+                    }
+                } catch {
+                    throw EncryptionError.decryptionFailed("Decryption error: \(error)")
+                }
             }
 
-            let chunk = Data(bytes: buffer, count: bytesRead)
+            // Finalize decryption
             do {
-                let decryptedChunk = try decryptor.update(withData: chunk)
-
-                if !decryptedChunk.isEmpty {
-                    let bytesWritten = decryptedChunk.withUnsafeBytes { ptr in
-                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: decryptedChunk.count)
+                let finalData = try decryptor.finalData()
+                if !finalData.isEmpty {
+                    let bytesWritten = finalData.withUnsafeBytes { ptr in
+                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
                     }
                     if bytesWritten < 0 {
-                        throw EncryptionError.decryptionFailed("Write error")
+                        throw EncryptionError.decryptionFailed("Write error on finalization")
                     }
                 }
             } catch {
-                throw EncryptionError.decryptionFailed("Decryption error: \(error)")
+                throw EncryptionError.decryptionFailed("Finalization error: \(error)")
             }
-        }
+        } else {
+            // Key-based decryption
+            let (encryptionKey, hmacKey) = try getEncryptionKeys()
+            var decryptor = RNCryptor.DecryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
+            var buffer = [UInt8](repeating: 0, count: chunkSize)
 
-        // Finalize decryption
-        do {
-            let finalData = try decryptor.finalData()
-            if !finalData.isEmpty {
-                let bytesWritten = finalData.withUnsafeBytes { ptr in
-                    outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+            while inputStream.hasBytesAvailable {
+                let bytesRead = inputStream.read(&buffer, maxLength: chunkSize)
+                if bytesRead < 0 {
+                    throw EncryptionError.decryptionFailed("Read error")
+                } else if bytesRead == 0 {
+                    break
                 }
-                if bytesWritten < 0 {
-                    throw EncryptionError.decryptionFailed("Write error on finalization")
+
+                let chunk = Data(bytes: buffer, count: bytesRead)
+                do {
+                    let decryptedChunk = try decryptor.update(withData: chunk)
+
+                    if !decryptedChunk.isEmpty {
+                        let bytesWritten = decryptedChunk.withUnsafeBytes { ptr in
+                            outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: decryptedChunk.count)
+                        }
+                        if bytesWritten < 0 {
+                            throw EncryptionError.decryptionFailed("Write error")
+                        }
+                    }
+                } catch {
+                    throw EncryptionError.decryptionFailed("Decryption error: \(error)")
                 }
             }
-        } catch {
-            throw EncryptionError.decryptionFailed("Finalization error: \(error)")
+
+            // Finalize decryption
+            do {
+                let finalData = try decryptor.finalData()
+                if !finalData.isEmpty {
+                    let bytesWritten = finalData.withUnsafeBytes { ptr in
+                        outputStream.write(ptr.bindMemory(to: UInt8.self).baseAddress!, maxLength: finalData.count)
+                    }
+                    if bytesWritten < 0 {
+                        throw EncryptionError.decryptionFailed("Write error on finalization")
+                    }
+                }
+            } catch {
+                throw EncryptionError.decryptionFailed("Finalization error: \(error)")
+            }
         }
     }
 
     // MARK: - Filename Encryption/Decryption
 
     func encryptFilename(_ filename: String) throws -> String {
-        let key = try getEncryptionKey()
-
         let data = filename.data(using: .utf8) ?? Data()
-        let password = String(data: key, encoding: .utf8) ?? ""
-        let encrypted = RNCryptor.encrypt(data: data, withPassword: password)
+
+        let encrypted: Data
+        if config.keySource == .passphrase {
+            // Use password-based encryption
+            let passphrase = try getPassphrase()
+            encrypted = RNCryptor.encrypt(data: data, withPassword: passphrase)
+        } else {
+            // Use key-based encryption
+            let (encryptionKey, hmacKey) = try getEncryptionKeys()
+            encrypted = RNCryptor.EncryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey).encrypt(data: data)
+        }
 
         // Base64 encode with URL-safe characters
         let base64 = encrypted.base64EncodedString()
@@ -1054,8 +1203,6 @@ class EncryptionManager {
     }
 
     func decryptFilename(_ encryptedFilename: String) throws -> String {
-        let key = try getEncryptionKey()
-
         // Restore Base64 padding and standard characters
         var base64 = encryptedFilename
             .replacingOccurrences(of: "-", with: "+")
@@ -1071,9 +1218,18 @@ class EncryptionManager {
             throw EncryptionError.decryptionFailed("Invalid base64 encoding")
         }
 
-        let password = String(data: key, encoding: .utf8) ?? ""
+        let decrypted: Data
         do {
-            let decrypted = try RNCryptor.decrypt(data: encrypted, withPassword: password)
+            if config.keySource == .passphrase {
+                // Use password-based decryption
+                let passphrase = try getPassphrase()
+                decrypted = try RNCryptor.decrypt(data: encrypted, withPassword: passphrase)
+            } else {
+                // Use key-based decryption
+                let (encryptionKey, hmacKey) = try getEncryptionKeys()
+                decrypted = try RNCryptor.DecryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey).decrypt(data: encrypted)
+            }
+
             guard let filename = String(data: decrypted, encoding: .utf8) else {
                 throw EncryptionError.decryptionFailed("Invalid UTF-8 in decrypted filename")
             }

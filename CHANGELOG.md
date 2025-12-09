@@ -2,6 +2,39 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.7.1] - 2025-12-09
+
+### Fixed - Critical Encryption Bug
+
+#### Encryption Implementation
+- **Fixed RNCryptor API usage** - Corrected key-based encryption implementation
+  - Previous version incorrectly tried to convert binary keys to UTF-8 strings
+  - Caused SIGTRAP crash during backup with file/keychain key sources
+  - Now properly uses `EncryptorV3` with separate encryption and HMAC keys
+- **Updated key file format** - File-based keys now require 64 bytes (32 encryption + 32 HMAC)
+  - Previous: 32 bytes (incorrect, caused crashes)
+  - Current: 64 bytes (32-byte encryption key + 32-byte HMAC key)
+- **Improved key generation** - Auto-generates both keys for file-based storage
+  - Automatically creates 64-byte key file on first backup if missing
+  - Creates config directory if it doesn't exist
+- **Fixed encryption/decryption** - Separate code paths for password-based vs key-based encryption
+  - Password-based: Uses `Encryptor(password:)` / `Decryptor(password:)`
+  - Key-based: Uses `EncryptorV3(encryptionKey:hmacKey:)` / `DecryptorV3(encryptionKey:hmacKey:)`
+
+#### Documentation
+- **Updated BACKUP_GUIDE.md** - Corrected key generation command
+  - Changed from `openssl rand ... 32` to `openssl rand ... 64`
+  - Updated expected file size from 32B to 64B
+  - Added explanation of dual-key requirement
+
+**Breaking Change:** Existing encryption key files from v0.7.0 are incompatible and must be regenerated:
+```bash
+# Generate new 64-byte key file
+openssl rand -out ~/.config/kodema/encryption-key.bin 64
+```
+
+**Note:** Backups created with v0.7.0 encryption cannot be decrypted and should be deleted.
+
 ## [0.7.0] - 2025-12-03
 
 ### Added - Encryption, Individual Files, and Path Validation

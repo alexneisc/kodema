@@ -490,13 +490,13 @@ encryption:
 The encryption key is automatically generated on first backup. However, you can also generate it manually:
 
 ```bash
-# For file-based key storage (32 bytes = 256 bits for AES-256)
+# For file-based key storage (64 bytes = 32 bytes encryption key + 32 bytes HMAC key)
 mkdir -p ~/.config/kodema
-openssl rand -out ~/.config/kodema/encryption-key.bin 32
+openssl rand -out ~/.config/kodema/encryption-key.bin 64
 
 # Verify key was created
 ls -lh ~/.config/kodema/encryption-key.bin
-# Should show: -rw-r--r-- 1 user staff 32B
+# Should show: -rw-r--r-- 1 user staff 64B
 ```
 
 **Key storage by source type:**
