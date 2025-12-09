@@ -479,11 +479,16 @@ encryption:
 - **File**: Store key in a file for sharing across machines
 - **Passphrase**: Interactive prompt on each backup/restore
 
+**What gets encrypted:**
+- ✅ File contents (always encrypted when `enabled: true`)
+- ✅ File names (encrypted when `encryptFilenames: true`)
+- ✅ Snapshot manifests (encrypted when `enabled: true`) - hides backup structure and metadata
+
 **Important:**
 - **Back up your encryption key separately!** Without it, backups are unrecoverable
 - For keychain: key is tied to your macOS user account
 - For file-based: save `~/.config/kodema/encryption-key.bin` securely
-- Filename encryption (`encryptFilenames: true`) hides file structure from B2
+- With encryption enabled, all backup data is fully protected in B2 storage
 
 **Generate encryption key:**
 

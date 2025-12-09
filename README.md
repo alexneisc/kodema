@@ -44,6 +44,7 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 - AES-256-CBC encryption before upload to B2
 - Three key storage methods: macOS Keychain, file, or passphrase
 - Optional filename encryption (hides file structure)
+- Manifest encryption (hides backup metadata and structure)
 - Streaming encryption (8MB chunks, no RAM limits)
 - Mixed backups (encrypted + plain files in same backup)
 - Automatic decryption on restore with skip logic

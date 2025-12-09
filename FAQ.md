@@ -338,6 +338,7 @@ encryption:
 - Files encrypted **before** upload to B2
 - Three key storage methods (keychain, file, passphrase)
 - Optional filename encryption
+- **Manifest encryption** (hides backup structure and metadata)
 - Streaming encryption (8MB chunks, no RAM limits)
 - Mixed backups (encrypted + plain files supported)
 

@@ -2,6 +2,27 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [Unreleased]
+
+### Added - Manifest Encryption
+
+#### Security Enhancement
+- **Manifest encryption** - Snapshot manifests now encrypted when encryption is enabled
+  - Hides backup structure and metadata from unauthorized access
+  - Protects file paths, sizes, timestamps, and version information
+  - Uses same encryption key as file encryption (AES-256-CBC)
+  - Automatic encryption when `encryption.enabled = true`
+  - Backward compatible with plaintext manifests (auto-detects and parses)
+- **Enhanced privacy** - Complete backup metadata now hidden in encrypted storage
+  - File structure no longer visible in B2 storage
+  - Only encrypted binary data visible in manifest.json files
+  - Requires decryption key to view any backup information
+
+**Security Impact:** With encryption enabled, all backup data is now fully encrypted:
+- File contents (encrypted)
+- File names (encrypted if `encryptFilenames: true`)
+- Snapshot manifests (encrypted) - **NEW**
+
 ## [0.7.1] - 2025-12-09
 
 ### Fixed - Critical Encryption Bug

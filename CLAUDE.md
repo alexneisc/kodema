@@ -100,7 +100,12 @@ kodema backup
   - Changed files get updated version timestamps
   - Deleted files are removed from manifest
 - `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
+  - Automatically decrypts manifest if encryption is enabled
+  - Backward compatible with plaintext manifests (pre-encryption)
 - `uploadManifest()`: Helper function to create and upload manifest to B2
+  - Automatically encrypts manifest if encryption is enabled
+  - Uses `EncryptionManager.encryptData()` for manifest encryption
+  - Content-Type changes to `application/octet-stream` for encrypted manifests
 - `uploadSuccessMarker()`: Uploads completion marker after successful backup
 - **Incremental Manifest Updates**: Prevents orphaned files on backup interruption
   - Initial manifest uploaded at backup start (empty or with previous files)

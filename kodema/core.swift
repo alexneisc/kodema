@@ -1238,6 +1238,36 @@ class EncryptionManager {
             throw EncryptionError.decryptionFailed("Filename decryption failed: \(error)")
         }
     }
+
+    // MARK: - Data Encryption/Decryption (for manifests, small data)
+
+    func encryptData(_ data: Data) throws -> Data {
+        if config.keySource == .passphrase {
+            // Use password-based encryption
+            let passphrase = try getPassphrase()
+            return RNCryptor.encrypt(data: data, withPassword: passphrase)
+        } else {
+            // Use key-based encryption
+            let (encryptionKey, hmacKey) = try getEncryptionKeys()
+            return RNCryptor.EncryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey).encrypt(data: data)
+        }
+    }
+
+    func decryptData(_ data: Data) throws -> Data {
+        do {
+            if config.keySource == .passphrase {
+                // Use password-based decryption
+                let passphrase = try getPassphrase()
+                return try RNCryptor.decrypt(data: data, withPassword: passphrase)
+            } else {
+                // Use key-based decryption
+                let (encryptionKey, hmacKey) = try getEncryptionKeys()
+                return try RNCryptor.DecryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey).decrypt(data: data)
+            }
+        } catch {
+            throw EncryptionError.decryptionFailed("Data decryption failed: \(error)")
+        }
+    }
 }
 
 // MARK: - B2 Errors and retry policy
@@ -1810,7 +1840,7 @@ func parseTimestamp(_ timestamp: String) -> Date? {
 }
 
 // Fetch latest snapshot manifest from B2
-func fetchLatestManifest(client: B2Client, remotePrefix: String) async throws -> SnapshotManifest? {
+func fetchLatestManifest(client: B2Client, remotePrefix: String, encryptionManager: EncryptionManager?) async throws -> SnapshotManifest? {
     // List all snapshot manifests
     let manifestFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
 
@@ -1842,14 +1872,26 @@ func fetchLatestManifest(client: B2Client, remotePrefix: String) async throws ->
         return nil
     }
 
-    let data = try await client.downloadFile(fileName: latest.fileName)
+    var data = try await client.downloadFile(fileName: latest.fileName)
+
+    // Decrypt manifest if encryption is enabled
+    if let encryptionManager = encryptionManager {
+        do {
+            data = try encryptionManager.decryptData(data)
+        } catch {
+            // If decryption fails, try parsing as plaintext (backward compatibility)
+            // This allows reading old unencrypted manifests
+            print("  \(dimColor)ℹ️  Manifest is plaintext (pre-encryption)\(resetColor)")
+        }
+    }
+
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(SnapshotManifest.self, from: data)
 }
 
 // Upload manifest to B2
-func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestamp: String, remotePrefix: String) async throws {
+func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestamp: String, remotePrefix: String, encryptionManager: EncryptionManager?) async throws {
     let manifest = SnapshotManifest(
         timestamp: timestamp,
         createdAt: Date(),
@@ -1861,7 +1903,12 @@ func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestam
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let manifestData = try encoder.encode(manifest)
+    var manifestData = try encoder.encode(manifest)
+
+    // Encrypt manifest if encryption is enabled
+    if let encryptionManager = encryptionManager {
+        manifestData = try encryptionManager.encryptData(manifestData)
+    }
 
     let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
     let manifestTempURL = FileManager.default.temporaryDirectory.appendingPathComponent("manifest_\(timestamp).json")
@@ -1869,7 +1916,8 @@ func uploadManifest(client: B2Client, manifestFiles: [FileVersionInfo], timestam
     defer { try? FileManager.default.removeItem(at: manifestTempURL) }
 
     let manifestSha1 = try sha1HexStream(fileURL: manifestTempURL)
-    try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: "application/json", sha1Hex: manifestSha1)
+    let contentType = encryptionManager != nil ? "application/octet-stream" : "application/json"
+    try await client.uploadSmallFile(fileURL: manifestTempURL, fileName: manifestPath, contentType: contentType, sha1Hex: manifestSha1)
 }
 
 // Upload success marker to indicate completed backup
@@ -2358,6 +2406,12 @@ func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
 
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
 
+    // Initialize encryption manager if encryption enabled
+    var encryptionManager: EncryptionManager?
+    if let encryptionConfig = config.encryption, encryptionConfig.enabled == true {
+        encryptionManager = EncryptionManager(config: encryptionConfig)
+    }
+
     // Fetch all snapshots
     print("  ☁️  Fetching snapshots from B2...")
     let snapshotFiles = try await client.listFiles(prefix: "\(remotePrefix)/snapshots/")
@@ -2496,7 +2550,13 @@ func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
             // ⚠️ Incomplete backup - only files in manifest are valid
             print("     ⚠️  Incomplete backup detected: \(snapshot.timestamp) - checking manifest...")
             do {
-                let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+                var manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+
+                // Decrypt manifest if encryption is enabled
+                if let encryptionManager = encryptionManager {
+                    manifestData = try encryptionManager.decryptData(manifestData)
+                }
+
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
@@ -2927,7 +2987,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
 
     // Fetch latest snapshot manifest from B2
     print("  ☁️ Fetching latest snapshot from B2...")
-    let latestManifest = try await fetchLatestManifest(client: client, remotePrefix: remotePrefix)
+    let latestManifest = try await fetchLatestManifest(client: client, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
     if let manifest = latestManifest {
         print("  ✓ Found previous snapshot: \(manifest.timestamp) with \(manifest.totalFiles) files")
     } else {
@@ -2992,7 +3052,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
 
     // Upload initial manifest (empty or with previous files) to establish snapshot
     do {
-        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
         print("  📸 Initial manifest created")
     } catch {
         print("  \(errorColor)⚠️  Failed to create initial manifest: \(error)\(resetColor)")
@@ -3151,7 +3211,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
             filesUploadedSinceLastManifest += 1
             if filesUploadedSinceLastManifest >= manifestUpdateInterval {
                 do {
-                    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+                    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
                     filesUploadedSinceLastManifest = 0
                 } catch {
                     // Non-fatal: log but continue backup
@@ -3173,7 +3233,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
     if isShutdownRequested() {
         // Graceful shutdown - save partial manifest without success marker
         print("  💾 Uploading partial manifest...")
-        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+        try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
 
         await progress.printFinal()
         print("  📸 Partial manifest uploaded: \(remotePrefix)/snapshots/\(timestamp)/manifest.json")
@@ -3187,7 +3247,7 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
     }
 
     // Normal completion - upload final manifest and success marker
-    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix)
+    try await uploadManifest(client: client, manifestFiles: manifestFiles, timestamp: timestamp, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
     try await uploadSuccessMarker(client: client, timestamp: timestamp, remotePrefix: remotePrefix)
 
     await progress.printFinal()
@@ -3406,7 +3466,7 @@ func formatRelativeTime(_ date: Date) -> String {
     }
 }
 
-func selectSnapshotInteractively(snapshots: [SnapshotInfo], client: B2Client, remotePrefix: String) async throws -> SnapshotManifest {
+func selectSnapshotInteractively(snapshots: [SnapshotInfo], client: B2Client, remotePrefix: String, encryptionManager: EncryptionManager?) async throws -> SnapshotManifest {
     guard !snapshots.isEmpty else {
         throw RestoreError.noSnapshotsFound
     }
@@ -3416,7 +3476,13 @@ func selectSnapshotInteractively(snapshots: [SnapshotInfo], client: B2Client, re
 
     let displayCount = min(snapshots.count, 10)
     for (index, snapshot) in snapshots.prefix(displayCount).enumerated() {
-        let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+        var manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+
+        // Decrypt manifest if encryption is enabled
+        if let encryptionManager = encryptionManager {
+            manifestData = try encryptionManager.decryptData(manifestData)
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
@@ -3453,17 +3519,29 @@ func selectSnapshotInteractively(snapshots: [SnapshotInfo], client: B2Client, re
 
     print("\n\(localColor)✓\(resetColor) Selected snapshot: \(selectedSnapshot.timestamp)\n")
 
-    let manifestData = try await client.downloadFile(fileName: selectedSnapshot.manifestPath)
+    var manifestData = try await client.downloadFile(fileName: selectedSnapshot.manifestPath)
+
+    // Decrypt manifest if encryption is enabled
+    if let encryptionManager = encryptionManager {
+        manifestData = try encryptionManager.decryptData(manifestData)
+    }
+
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(SnapshotManifest.self, from: manifestData)
 }
 
-func getTargetSnapshot(client: B2Client, remotePrefix: String, options: RestoreOptions) async throws -> SnapshotManifest {
+func getTargetSnapshot(client: B2Client, remotePrefix: String, options: RestoreOptions, encryptionManager: EncryptionManager?) async throws -> SnapshotManifest {
     if let timestamp = options.snapshotTimestamp {
         let manifestPath = "\(remotePrefix)/snapshots/\(timestamp)/manifest.json"
         do {
-            let data = try await client.downloadFile(fileName: manifestPath)
+            var data = try await client.downloadFile(fileName: manifestPath)
+
+            // Decrypt manifest if encryption is enabled
+            if let encryptionManager = encryptionManager {
+                data = try encryptionManager.decryptData(data)
+            }
+
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             return try decoder.decode(SnapshotManifest.self, from: data)
@@ -3472,7 +3550,7 @@ func getTargetSnapshot(client: B2Client, remotePrefix: String, options: RestoreO
         }
     } else {
         let snapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
-        return try await selectSnapshotInteractively(snapshots: snapshots, client: client, remotePrefix: remotePrefix)
+        return try await selectSnapshotInteractively(snapshots: snapshots, client: client, remotePrefix: remotePrefix, encryptionManager: encryptionManager)
     }
 }
 
@@ -3481,6 +3559,12 @@ func listSnapshotsCommand(config: AppConfig, options: RestoreOptions) async thro
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
     let remotePrefix = config.backup?.remotePrefix ?? "backup"
+
+    // Initialize encryption manager if encryption enabled
+    var encryptionManager: EncryptionManager?
+    if let encryptionConfig = config.encryption, encryptionConfig.enabled == true {
+        encryptionManager = EncryptionManager(config: encryptionConfig)
+    }
 
     let allSnapshots = try await fetchAllSnapshots(client: client, remotePrefix: remotePrefix)
 
@@ -3491,7 +3575,13 @@ func listSnapshotsCommand(config: AppConfig, options: RestoreOptions) async thro
 
     var snapshots: [(SnapshotInfo, SnapshotManifest)] = []
     for snapshot in allSnapshots {
-        let manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+        var manifestData = try await client.downloadFile(fileName: snapshot.manifestPath)
+
+        // Decrypt manifest if encryption is enabled
+        if let encryptionManager = encryptionManager {
+            manifestData = try encryptionManager.decryptData(manifestData)
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let manifest = try decoder.decode(SnapshotManifest.self, from: manifestData)
@@ -3739,7 +3829,7 @@ func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false
         print("\n\(boldColor)Starting restore\(resetColor)")
     }
 
-    let snapshot = try await getTargetSnapshot(client: client, remotePrefix: remotePrefix, options: options)
+    let snapshot = try await getTargetSnapshot(client: client, remotePrefix: remotePrefix, options: options, encryptionManager: encryptionManager)
     print("  📸 Snapshot: \(snapshot.timestamp)")
     print("  📂 Total files in snapshot: \(snapshot.totalFiles)")
 
