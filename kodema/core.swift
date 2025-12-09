@@ -3847,6 +3847,31 @@ func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false
     let totalBytes = filesToRestore.reduce(Int64(0)) { $0 + $1.size }
     print("  💾 Total size: \(formatBytes(totalBytes))")
 
+    // Warn if restoring to original location (no --output specified)
+    if options.outputDirectory == nil && !dryRun && !options.force {
+        print("\n\(errorColor)⚠️  Warning:\(resetColor) You are about to restore files to their original locations.")
+        print("  This may overwrite your current files!")
+        print("  Consider using --output <directory> to restore to a different location.")
+        print("\n\(boldColor)Options:\(resetColor)")
+        print("  c - Continue with restore to original location")
+        print("  s - Cancel")
+        print("\nSelect option: ", terminator: "")
+        fflush(stdout)
+
+        guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            throw RestoreError.cancelled
+        }
+
+        switch input {
+        case "c", "continue":
+            print("\(localColor)✓\(resetColor) Continuing...\n")
+        case "s", "skip", "cancel":
+            throw RestoreError.cancelled
+        default:
+            throw RestoreError.invalidSelection
+        }
+    }
+
     let conflicts = checkForConflicts(files: filesToRestore, outputDir: outputDir)
     if !conflicts.isEmpty {
         print("  ⚠️  Conflicts: \(conflicts.count) files already exist")

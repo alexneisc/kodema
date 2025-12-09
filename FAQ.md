@@ -303,14 +303,31 @@ Backblaze B2 has a 1000-byte limit for file names. Files with very long paths ar
 
 ### Restore overwrites existing files
 
-By default, Kodema asks for confirmation. Use `--force` to skip:
+Kodema has two layers of protection:
+
+1. **Original location warning** (if `--output` not specified):
+   - Warns that files will be restored to their original locations
+   - Shows "Continue" or "Cancel" options
+   - Skipped with `--force` or `--dry-run`
+
+2. **Conflict detection** (if files exist):
+   - Shows which files will be overwritten
+   - Asks for confirmation
+   - Skipped with `--force` or `--dry-run`
+
+Use `--force` to skip all confirmations:
 ```bash
 kodema restore --snapshot 2024-11-27_143022 --force
 ```
 
-Or restore to different location:
+Or restore to different location (safer):
 ```bash
 kodema restore --output ~/restored-files/
+```
+
+Preview before restoring:
+```bash
+kodema restore --dry-run --snapshot 2024-11-27_143022
 ```
 
 ## Technical Questions

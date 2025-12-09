@@ -37,6 +37,7 @@ Kodema is a backup tool for macOS that backs up your iCloud Drive and local file
 - Interactive snapshot selection with metadata
 - Restore entire snapshots or specific files/folders
 - Custom restore location support
+- Safety warning when restoring to original locations
 - Conflict detection with overwrite confirmation
 - Preserves original modification timestamps
 

@@ -99,6 +99,7 @@ Restores files from backup snapshots with flexible options for snapshot selectio
 - 📂 **Interactive selection** - Browse available snapshots with metadata
 - 🎯 **Targeted restore** - Restore specific files or folders
 - 📍 **Custom location** - Restore to any directory
+- 🔒 **Safety warning** - Warns when restoring to original locations (without --output)
 - ⚠️ **Conflict detection** - Warns before overwriting existing files
 
 **Usage:**
@@ -137,10 +138,11 @@ kodema restore --snapshot 2024-11-27_143022 \
 **How it works:**
 1. Select snapshot (interactive or via `--snapshot`)
 2. Filter files to restore (all or via `--path`)
-3. Check for conflicts with existing files
-4. Confirm overwrites (unless `--force`)
-5. Download and restore with progress tracking
-6. Restore original modification timestamps
+3. Safety warning if restoring to original location (without `--output`, unless `--force`)
+4. Check for conflicts with existing files
+5. Confirm overwrites (unless `--force`)
+6. Download and restore with progress tracking
+7. Restore original modification timestamps
 
 **Path filtering:**
 - `--path folder1` matches files in folder1 at any level
@@ -149,10 +151,12 @@ kodema restore --snapshot 2024-11-27_143022 \
 - Can specify multiple paths: `--path file1.txt --path folder2/`
 - `--list-snapshots` with `--path` shows only snapshots containing those files
 
-**Conflict handling:**
-- Shows list of files that will be overwritten
-- Options: overwrite all or cancel
-- Use `--force` to skip confirmation
+**Safety and conflict handling:**
+- **Original location warning**: If `--output` is not specified, warns before restoring to original locations
+- **Conflict detection**: Shows list of files that will be overwritten
+- **Interactive confirmation**: Options to continue or cancel
+- **Bypass with --force**: Skips all warnings and confirmations
+- **Safe preview**: Use `--dry-run` to see what would be restored without warnings
 
 ---
 

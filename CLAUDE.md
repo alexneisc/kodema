@@ -232,18 +232,19 @@ kodema backup
 - Performance: only downloads manifests for incomplete backups (typically 0-5% of total)
 - **Dry-run**: Shows snapshots to delete, orphaned files to remove, without making changes
 
-**`kodema restore [options]` (lines 2613-2686)**
+**`kodema restore [options]` (lines 3814-3894)**
 1. Parse restore options (snapshot, paths, output, force, list-snapshots, dry-run)
 2. If `--list-snapshots`: display all available snapshots and exit
 3. Get target snapshot (interactive selection or via `--snapshot` flag)
 4. Filter files to restore (all or specific paths via `--path`)
 5. Determine output directory (original location or `--output`)
-6. Check for file conflicts with existing files
-7. **If --dry-run**: Show preview (files, size, conflicts) and exit
-8. If conflicts and no `--force`: prompt user for confirmation (skipped in dry-run)
-9. Download files from B2 with progress tracking
-10. Write files and restore modification timestamps
-11. Report completion with success/failure counts
+6. **Safety warning**: If `--output` not specified (restoring to original locations), warn user and prompt for confirmation (skipped if `--force` or `--dry-run`)
+7. Check for file conflicts with existing files
+8. **If --dry-run**: Show preview (files, size, conflicts) and exit
+9. If conflicts and no `--force`: prompt user for confirmation (skipped in dry-run)
+10. Download files from B2 with progress tracking
+11. Write files and restore modification timestamps
+12. Report completion with success/failure counts
 
 **Flags:**
 - `--snapshot <timestamp>` - Restore specific snapshot
