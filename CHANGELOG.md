@@ -2,7 +2,7 @@
 
 All notable changes to Kodema will be documented in this file.
 
-## [Unreleased]
+## [0.7.2] - 2025-12-09
 
 ### Added - Manifest Encryption
 
@@ -22,6 +22,13 @@ All notable changes to Kodema will be documented in this file.
 - File contents (encrypted)
 - File names (encrypted if `encryptFilenames: true`)
 - Snapshot manifests (encrypted) - **NEW**
+
+**Implementation:**
+- Added `encryptData()` and `decryptData()` methods to EncryptionManager
+- Modified `uploadManifest()` to encrypt before upload
+- Modified `fetchLatestManifest()` to decrypt after download
+- Updated all manifest operations: backup, cleanup, restore, list-snapshots
+- Content-Type changes to `application/octet-stream` for encrypted manifests
 
 ## [0.7.1] - 2025-12-09
 
