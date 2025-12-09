@@ -17,11 +17,7 @@ let package = Package(
         .executableTarget(
             name: "Kodema",
             dependencies: ["Yams", "RNCryptor"],
-            path: "kodema",
-            sources: [
-                "core.swift",
-                "Version.swift"
-            ]
+            path: "kodema"
         )
     ]
 )

@@ -52,20 +52,50 @@ kodema backup
 
 ## Architecture
 
-### Core Components (kodema/core.swift)
+The codebase is organized into logical modules for maintainability and clarity:
 
-**Configuration System (lines 6-61)**
+```
+kodema/
+├── Models/              - Data structures and configuration
+├── Core/                - Core utilities and progress tracking
+├── Security/            - Encryption and hashing
+├── FileSystem/          - File scanning and iCloud integration
+├── Network/             - Backblaze B2 API client
+├── Commands/            - Command implementations
+├── Utilities/           - Helper functions
+├── main.swift           - Entry point
+└── Version.swift        - Version constant
+```
+
+### Models (kodema/Models/)
+
+**Config.swift** - Configuration data structures
 - YAML-based config loading via Yams library
-- Nested config structs: `B2Config`, `TimeoutsConfig`, `IncludeConfig`, `FiltersConfig`, `RetentionConfig`, `BackupConfig`, `MirrorConfig`
+- Nested config structs: `B2Config`, `TimeoutsConfig`, `IncludeConfig`, `FiltersConfig`, `RetentionConfig`, `BackupConfig`, `MirrorConfig`, `EncryptionConfig`
 - Default config location: `~/.config/kodema/config.yml`
 - `BackupConfig.manifestUpdateInterval`: Frequency of incremental manifest updates (default: 50 files)
 
-**File Discovery & Scanning (lines 388-449)**
+**Snapshot.swift** - Versioning data structures
+- `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
+- `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
+- **IMPORTANT**: Each snapshot manifest contains ALL files existing at that point in time, not just changed files
+  - New snapshots inherit files from previous snapshot
+  - Changed files get updated version timestamps
+  - Deleted files are removed from manifest
+
+**FileItem.swift** - File metadata model for scanning
+
+**RestoreModels.swift** - Restore-specific data structures
+
+### FileSystem (kodema/FileSystem/)
+
+**FileScanner.swift** - File discovery and scanning
 - `buildFoldersToScan()`: Determines folders to backup (custom list or all iCloud Drive folders)
 - `scanFolder()`: Recursively scans directories using `FileManager.enumerator`
-- `checkFileStatus()`: Detects if file is local or in iCloud (not yet downloaded)
+- `scanFile()`: Scans individual files
 
-**iCloud Integration (lines 295-364)**
+**iCloudManager.swift** - iCloud integration
+- `checkFileStatus()`: Detects if file is local or in iCloud (not yet downloaded)
 - `getAvailableDiskSpace()`: Checks available disk space using `volumeAvailableCapacityForImportantUsageKey`
 - Disk space validation: Before downloading iCloud files, verifies 120% of file size is available (20% buffer)
 - `startDownloadIfNeeded()`: Triggers iCloud file download if space check passes
@@ -74,7 +104,15 @@ kodema backup
 - Uses `URLResourceKey`: `.isUbiquitousItemKey`, `.ubiquitousItemDownloadingStatusKey`
 - Files skipped if insufficient disk space (marked as failed with warning)
 
-**B2 API Client (lines 686-1131)**
+**GlobMatcher.swift** - Pattern matching and filtering
+- Custom glob implementation using `fnmatch()` from Darwin
+- Special handling for directory patterns: `/**` and trailing `/`
+- Supports tilde expansion: `~/.Trash/**`
+- `applyFilters()`: Applies size and glob filters to file lists
+
+### Network (kodema/Network/)
+
+**B2Client.swift** - Backblaze B2 API client
 - `B2Client` class handles all Backblaze API operations
 - Auth flow: `ensureAuthorized()` → caches `B2AuthorizeResponse`
 - Bucket resolution: `ensureBucketId()` resolves bucket name to ID
@@ -85,20 +123,55 @@ kodema backup
 - **Download strategies:**
   - `downloadFile()`: Loads entire file into RAM (use for small files like manifests ~500KB)
   - `downloadFileStreaming()`: Streams directly to disk (efficient for large files, constant RAM usage)
+
+**B2Error.swift** - Error handling and retry logic
 - **Retry logic with intelligent error handling:**
   - Expired upload URLs (401): Retry immediately with new URL
   - Rate limits (429): Exponential backoff (1s, 2s, 4s) with visible warning
   - Temporary errors (5xx): Exponential backoff
   - Client errors (4xx except 401/429): Fail immediately
   - Max retries: 3 (configurable via `b2.maxRetries`)
+- `RestoreError` enum for restore-specific errors
 
-**Versioning & Snapshots (lines 70-86, 1066-1193)**
-- `SnapshotManifest`: JSON metadata for each backup run (timestamp, file list, total size)
-- `FileVersionInfo`: Per-file metadata (path, size, mtime, version timestamp)
-- **IMPORTANT**: Each snapshot manifest contains ALL files existing at that point in time, not just changed files
-  - New snapshots inherit files from previous snapshot
-  - Changed files get updated version timestamps
-  - Deleted files are removed from manifest
+**B2Models.swift** - API response models
+- Decodable structs for all B2 API responses
+
+**URLSessionExtensions.swift** - HTTP utilities
+
+### Security (kodema/Security/)
+
+**EncryptionManager.swift** - Encryption functionality
+- Supports three key sources: keychain, file, passphrase
+- File encryption/decryption with streaming (8MB chunks)
+- Filename encryption/decryption (URL-safe Base64)
+- Manifest data encryption/decryption
+- Uses RNCryptor for encryption (AES-256)
+
+**SHA1.swift** - Streaming SHA1 computation
+- Computes SHA1 in 8MB chunks to avoid RAM limits
+
+### Core (kodema/Core/)
+
+**ProgressTracker.swift** - Progress tracking
+- `ProgressTracker` actor: Thread-safe progress state
+- Tracks completed, failed, and skipped files
+- ANSI terminal UI: progress bar, speed, ETA, current file
+- Displays skipped files (e.g., path too long) in progress and final summary
+- Cursor management: hides cursor during progress, restores on exit/error
+
+**Constants.swift** - Global constants
+- ANSI color codes for terminal output
+- `maxB2PathLength` constant: 950 bytes (safety margin below B2's 1000-byte limit)
+
+**Helpers.swift** - Core utilities
+- Config loading and parsing
+- URL path expansion
+- Error types: `TimeoutError`, `ConfigError`, `EncryptionError`
+- Timeout wrapper functions
+
+### Commands (kodema/Commands/)
+
+**SnapshotHelpers.swift** - Shared snapshot utilities
 - `fetchLatestManifest()`: Downloads and parses the latest snapshot manifest from B2
   - Automatically decrypts manifest if encryption is enabled
   - Backward compatible with plaintext manifests (pre-encryption)
@@ -107,19 +180,28 @@ kodema backup
   - Uses `EncryptionManager.encryptData()` for manifest encryption
   - Content-Type changes to `application/octet-stream` for encrypted manifests
 - `uploadSuccessMarker()`: Uploads completion marker after successful backup
+- `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
+- Storage structure:
+  - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
+  - `backup/files/{relative_path}/{timestamp}` - versioned file content
+  - `backup/.success-markers/{timestamp}` - completion markers for successful backups
+
+**BackupCommand.swift** - Incremental backup logic
 - **Incremental Manifest Updates**: Prevents orphaned files on backup interruption
   - Initial manifest uploaded at backup start (empty or with previous files)
   - Manifest re-uploaded every N files (configurable via `manifestUpdateInterval`)
   - Final manifest uploaded at backup end (with deleted files filtered)
   - Success marker uploaded after successful backup completion
   - Ensures every uploaded file is tracked in manifest, even if backup is interrupted
-- Storage structure:
-  - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
-  - `backup/files/{relative_path}/{timestamp}` - versioned file content
-  - `backup/.success-markers/{timestamp}` - completion markers for successful backups
-- `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
+- **Path Length Validation**: Skips files with paths >950 bytes (B2 limit)
+- **Graceful Shutdown**: Signal handlers for SIGINT/SIGTERM
+  - Sets global flag instead of immediate exit
+  - Allows current file upload to complete
+  - Saves partial manifest with progress
+  - Shows cursor and exits cleanly with appropriate exit code
+  - Preserves all uploaded files for resume on next backup
 
-**Retention & Cleanup (lines 1625-1820)**
+**CleanupCommand.swift** - Retention and cleanup
 - Time Machine-style retention policy: hourly → daily → weekly → monthly
 - `classifySnapshot()`: Categorizes snapshots by age
 - `selectSnapshotsToKeep()`: Groups by time period, keeps latest in each bucket
@@ -131,44 +213,55 @@ kodema backup
   - Significantly faster than downloading all manifests (only incomplete backups need manifest check)
 - Cleanup deletes: snapshot manifests, success markers, and orphaned file versions
 
-**Progress Tracking (lines 96-239)**
-- `ProgressTracker` actor: Thread-safe progress state
-- Tracks completed, failed, and skipped files
-- ANSI terminal UI: progress bar, speed, ETA, current file
-- Displays skipped files (e.g., path too long) in progress and final summary
-- Cursor management: hides cursor during progress, restores on exit/error
-- **Graceful Shutdown** (lines 1266-1298): Signal handlers for SIGINT/SIGTERM
-  - Sets global flag instead of immediate exit
-  - Allows current file upload to complete
-  - Saves partial manifest with progress
-  - Shows cursor and exits cleanly with appropriate exit code
-  - Preserves all uploaded files for resume on next backup
+**MirrorCommand.swift** - Simple mirroring (uploads all files)
 
-**Path Length Validation (lines 118, 2359-2367)**
-- `maxB2PathLength` constant: 950 bytes (safety margin below B2's 1000-byte limit)
-- Before upload, checks if `versionPath.utf8.count > maxB2PathLength`
-- Files with paths exceeding limit are skipped with warning message
-- Skipped files tracked separately from failed files
-- Common in deep folder structures (node_modules, .git, nested projects)
+**RestoreCommand.swift** - Restore functionality
+- Interactive snapshot selection
+- Path filtering and conflict detection
+- Streaming download with encryption support
+- Dry-run mode for previewing restores
+
+**TestConfigCommand.swift** - Configuration validation
+- Tests B2 authentication and bucket access
+- Scans configured folders
+- Checks disk space and path lengths
+- Validates all settings before backup
+
+**ListCommand.swift** - iCloud discovery
+- Enumerates iCloud containers
+- Shows third-party app folders with file counts
+
+**HelpCommand.swift** - Help and version display
+
+### Utilities (kodema/Utilities/)
+
+**SignalHandler.swift** - Graceful shutdown
+- SIGINT/SIGTERM handlers for clean exit
+
+**RemotePath.swift** - Path building utilities
+
+**ContentType.swift** - MIME type detection
 
 ### Command Flow
 
-**`kodema help` (lines 1201-1222)**
+Commands are implemented in `kodema/Commands/` with entry point in `kodema/main.swift`.
+
+**`kodema help`** (HelpCommand.swift)
 - Displays usage information, available commands, and examples
 - Aliases: `help`, `-h`, `--help`
 
-**`kodema version` (lines 1197-1199)**
+**`kodema version`** (HelpCommand.swift)
 - Displays the current version of Kodema
 - Aliases: `version`, `-v`, `--version`
 - Version string is defined in `kodema/Version.swift`
 
-**`kodema list` (lines 1240-1402)**
+**`kodema list`** (ListCommand.swift)
 1. Enumerate iCloud containers in `~/Library/Mobile Documents/`
 2. Skip Apple system containers (com~apple~*)
 3. Show third-party app folders with file counts and sizes
 4. Helpful for discovering what to backup
 
-**`kodema test-config [--config <path>]`**
+**`kodema test-config [--config <path>]`** (TestConfigCommand.swift)
 1. Load and validate YAML configuration file
 2. Test B2 authentication and bucket access
 3. Scan configured folders and check accessibility
@@ -186,7 +279,7 @@ kodema backup
 - Disk space check: requires 20% buffer above file size for safety
 - Path length check: simulates full B2 path to detect potential skips before backup
 
-**`kodema backup [--config <path>] [--dry-run]` (lines 1914-2124)**
+**`kodema backup [--config <path>] [--dry-run]`** (BackupCommand.swift)
 1. Scan local files and apply filters
 2. Fetch latest snapshot manifest from B2 (`fetchLatestManifest()`)
 3. Determine which files changed by comparing with previous snapshot (`fileNeedsBackup()`)
@@ -209,14 +302,14 @@ kodema backup
 - **Graceful shutdown**: On SIGINT/SIGTERM, finishes current file, saves partial manifest, exits cleanly
 - **Dry-run**: Shows files to upload and total size without making any changes
 
-**`kodema mirror [--config <path>]` (lines 1836-1939)**
+**`kodema mirror [--config <path>]`** (MirrorCommand.swift)
 1. Scan all files
 2. Sort files (local first)
 3. Upload all files (no change detection)
 4. Simple flat structure in B2
 - Supports custom config via `--config` or `-c` flag
 
-**`kodema cleanup [--config <path>] [--dry-run]` (lines 1670-1910)**
+**`kodema cleanup [--config <path>] [--dry-run]`** (CleanupCommand.swift)
 1. Fetch all snapshot manifests from B2
 2. Apply retention policy to select snapshots to keep
 3. **If --dry-run**: Show preview of what would be deleted and exit
@@ -232,7 +325,7 @@ kodema backup
 - Performance: only downloads manifests for incomplete backups (typically 0-5% of total)
 - **Dry-run**: Shows snapshots to delete, orphaned files to remove, without making changes
 
-**`kodema restore [options]` (lines 3814-3894)**
+**`kodema restore [options]`** (RestoreCommand.swift)
 1. Parse restore options (snapshot, paths, output, force, list-snapshots, dry-run)
 2. If `--list-snapshots`: display all available snapshots and exit
 3. Get target snapshot (interactive selection or via `--snapshot` flag)
@@ -290,7 +383,7 @@ kodema backup
 - Client errors (4xx except 401/429) fail immediately without retry
 - File-level failures tracked but don't abort entire backup
 
-**Glob Pattern Filtering (lines 451-527)**
+**Glob Pattern Filtering** (FileSystem/GlobMatcher.swift)
 - Custom glob implementation using `fnmatch()` from Darwin
 - Special handling for directory patterns: `/**` and trailing `/`
 - Supports tilde expansion: `~/.Trash/**`
@@ -299,26 +392,28 @@ kodema backup
 
 ### When Adding Features
 
-**Config Changes**: Update both `config.example.yml` and the Decodable structs in core.swift (lines 6-59)
+**Config Changes**: Update both `config.example.yml` and the Decodable structs in `kodema/Models/Config.swift`
 
-**New B2 Operations**: Follow the pattern in `B2Client`:
-- Add response struct conforming to `Decodable`
-- Implement retry logic with `mapHTTPErrorToB2()`
-- Use `session.data(for:timeout:)` extension (line 546)
+**New B2 Operations**: Follow the pattern in `kodema/Network/B2Client.swift`:
+- Add response struct conforming to `Decodable` in `kodema/Network/B2Models.swift`
+- Implement retry logic with `mapHTTPErrorToB2()` in `kodema/Network/B2Error.swift`
+- Use `session.data(for:timeout:)` extension from `kodema/Network/URLSessionExtensions.swift`
 
-**Progress Updates**: Call `await progress.printProgress()` before and after long operations
+**Progress Updates**: Call `await progress.printProgress()` before and after long operations (see `kodema/Core/ProgressTracker.swift`)
 
-**iCloud File Handling**: Always check `checkFileStatus()` before accessing files, use `startDownloadIfNeeded()` + `waitForICloudDownload()` for cloud files
+**iCloud File Handling**: Always check `checkFileStatus()` before accessing files, use `startDownloadIfNeeded()` + `waitForICloudDownload()` for cloud files (see `kodema/FileSystem/iCloudManager.swift`)
+
+**New Commands**: Create new file in `kodema/Commands/` following existing patterns, add entry to switch statement in `kodema/main.swift`
 
 ### Testing Considerations
 
-**No Tests Yet**: Test infrastructure not implemented (Makefile line 38)
+**No Tests Yet**: Test infrastructure not implemented
 
 **Manual Testing Approach**:
 1. Use `kodema list` to verify iCloud access
 2. Test with small folder first
 3. Verify uploads in B2 web interface
-4. Test retention with `kodema cleanup --dry-run` (not implemented, would need to add)
+4. Test retention with `kodema cleanup --dry-run`
 
 ### Glob Pattern Examples
 ```yaml
@@ -340,10 +435,52 @@ Package definition: `Package.swift` (in repository root)
 
 ## Code Organization
 
-**Single File Architecture**: All code in `kodema/core.swift` (~1950 lines)
-- MARK comments divide sections: Models, Helpers, B2 API, Commands
-- Entry point: `@main struct Runner` (line 1979)
-- Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant and is used by `printVersion()` and `printHelp()`
+**Modular Architecture**: Code is organized into logical modules (28 files, ~4100 lines total)
+
+```
+kodema/
+├── Models/              (4 files, ~118 lines) - Data structures
+│   ├── Config.swift
+│   ├── FileItem.swift
+│   ├── RestoreModels.swift
+│   └── Snapshot.swift
+├── Core/                (3 files, ~280 lines) - Core utilities
+│   ├── Constants.swift
+│   ├── Helpers.swift
+│   └── ProgressTracker.swift
+├── Security/            (2 files, ~579 lines) - Encryption & hashing
+│   ├── EncryptionManager.swift
+│   └── SHA1.swift
+├── FileSystem/          (3 files, ~254 lines) - File operations
+│   ├── FileScanner.swift
+│   ├── GlobMatcher.swift
+│   └── iCloudManager.swift
+├── Network/             (4 files, ~587 lines) - B2 API client
+│   ├── B2Client.swift
+│   ├── B2Error.swift
+│   ├── B2Models.swift
+│   └── URLSessionExtensions.swift
+├── Commands/            (8 files, ~2040 lines) - Command implementations
+│   ├── BackupCommand.swift
+│   ├── CleanupCommand.swift
+│   ├── HelpCommand.swift
+│   ├── ListCommand.swift
+│   ├── MirrorCommand.swift
+│   ├── RestoreCommand.swift
+│   ├── SnapshotHelpers.swift
+│   └── TestConfigCommand.swift
+├── Utilities/           (3 files, ~57 lines) - Helper functions
+│   ├── ContentType.swift
+│   ├── RemotePath.swift
+│   └── SignalHandler.swift
+├── main.swift           (105 lines) - Entry point with top-level await
+└── Version.swift        (1 line) - Version constant
+```
+
+- Entry point: `kodema/main.swift` uses top-level await for async execution
+- Version: `kodema/Version.swift` exports `KODEMA_VERSION` constant
+- All files use MARK comments for internal organization
+- Package.swift auto-discovers all Swift files in target directory
 
 ## Code Style Guidelines
 
@@ -366,13 +503,13 @@ Package definition: `Package.swift` (in repository root)
 
 2. **Part Size**: Must be ≥ B2 minimum (5MB), configured in MB not bytes
 
-3. **File Size Threshold**: Currently 5GB (lines 1872, 1883) - could make configurable
+3. **File Size Threshold**: Currently 5GB (see `BackupCommand.swift` and `MirrorCommand.swift`) - could make configurable
 
 4. **Retention Cleanup**: Irreversible! Users should test policy before running cleanup
 
 5. **B2 Rate Limits**: B2 returns 429 when API limits are hit. Kodema handles this automatically with exponential backoff (1s, 2s, 4s) and retries. `uploadConcurrency > 1` increases rate limit risk. If hitting rate limits frequently, reduce concurrency or use smaller `partSizeMB`.
 
-6. **Signal Handling**: setupSignalHandlers() must be called early (line 2116). Implements graceful shutdown - finishes current file and saves progress before exiting. Don't use SIGKILL (kill -9) as it bypasses graceful shutdown.
+6. **Signal Handling**: `setupSignalHandlers()` must be called early (see `main.swift`). Implements graceful shutdown - finishes current file and saves progress before exiting. Don't use SIGKILL (kill -9) as it bypasses graceful shutdown.
 
 7. **Restore Memory Usage**: Now uses streaming downloads (constant ~8-16MB RAM usage regardless of file size). Manifests still load into RAM but are small (~500KB).
 
