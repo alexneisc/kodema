@@ -306,7 +306,7 @@ func runCleanup(config: AppConfig, notificationManager: NotificationProtocol, dr
     // Find orphaned versions
     var orphanedVersions: [(file: B2FileInfo, versionTimestamp: String)] = []
     for file in allFileVersions {
-        // Expected format: backup/files/Documents/myfile.txt/2024-11-27_143022
+        // Expected format: backup/files/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md/2024-11-27_143022
         let components = file.fileName.split(separator: "/")
         guard components.count >= 4 else { continue }
 

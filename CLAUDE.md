@@ -180,11 +180,16 @@ kodema/
   - Uses `EncryptionManager.encryptData()` for manifest encryption
   - Content-Type changes to `application/octet-stream` for encrypted manifests
 - `uploadSuccessMarker()`: Uploads completion marker after successful backup
+- `buildRelativePath()`: Builds relative path from home directory to preserve full structure
+  - For folders inside home: uses complete path from `~/` (e.g., `Library/Mobile Documents/iCloud~md~obsidian/notes/work.md`)
+  - For folders outside home: uses folder name + relative path
+  - Ensures proper restore to original locations and prevents path collisions between different backup folders
 - `fileNeedsBackup()`: Determines if file changed by comparing size + mtime against previous snapshot manifest
 - Storage structure:
   - `backup/snapshots/{timestamp}/manifest.json` - snapshot metadata (complete file list)
-  - `backup/files/{relative_path}/{timestamp}` - versioned file content
+  - `backup/files/{full-path-from-home}/{timestamp}` - versioned file content with complete directory structure
   - `backup/.success-markers/{timestamp}` - completion markers for successful backups
+  - Example: `backup/files/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md/2025-12-12_143022`
 
 **BackupCommand.swift** - Incremental backup logic
 - **Incremental Manifest Updates**: Prevents orphaned files on backup interruption

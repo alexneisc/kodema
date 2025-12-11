@@ -111,21 +111,37 @@ func uploadSuccessMarker(client: B2Client, timestamp: String, remotePrefix: Stri
     try await client.uploadSmallFile(fileURL: markerTempURL, fileName: markerPath, contentType: "text/plain", sha1Hex: markerSha1)
 }
 
-// Build relative path from home or scan root
+// Build relative path from home directory
+// This preserves the full path structure so files can be restored to their original location
 func buildRelativePath(for localURL: URL, from scanRoots: [URL]) -> String {
     let localPath = localURL.path
+    let home = FileManager.default.homeDirectoryForCurrentUser
 
     // Try to find matching scan root
     for root in scanRoots {
         if localPath.hasPrefix(root.path) {
-            let relative = String(localPath.dropFirst(root.path.count))
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            return relative
+            // Build path relative to home directory to preserve full structure
+            if root.path.hasPrefix(home.path) {
+                // Root is inside home - use full path from home
+                let homeRelativePath = String(localPath.dropFirst(home.path.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return homeRelativePath
+            } else {
+                // Root is outside home - use scan root name + relative path
+                let rootName = root.lastPathComponent
+                let filePart = String(localPath.dropFirst(root.path.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+                if filePart.isEmpty {
+                    return rootName
+                } else {
+                    return "\(rootName)/\(filePart)"
+                }
+            }
         }
     }
 
     // Fallback to home-relative
-    let home = FileManager.default.homeDirectoryForCurrentUser
     if localPath.hasPrefix(home.path) {
         return String(localPath.dropFirst(home.path.count))
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))

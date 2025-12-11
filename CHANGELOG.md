@@ -2,6 +2,56 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.9.0] - 2025-12-12
+
+### Fixed - Path Handling for Multiple Backup Folders
+
+#### Critical Path Structure Fix
+- **Fixed file path collisions when backing up multiple folders**
+- **Previous behavior**: When backing up multiple folders (e.g., different iCloud apps), files with identical relative paths would overwrite each other
+  - Example: `iCloud~md~obsidian/notes/work.md` and `iCloud~com~renfei~SnippetsLab/notes/work.md` both stored as `backup/files/notes/work.md/{timestamp}`
+  - Result: Files from different folders collided, losing folder context
+- **New behavior**: Preserves full path structure from home directory
+  - Example paths in B2:
+    - `backup/files/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md/{timestamp}`
+    - `backup/files/Library/Mobile Documents/iCloud~com~renfei~SnippetsLab/notes/work.md/{timestamp}`
+  - Each folder maintains its complete structure with no collisions
+
+#### Implementation Changes
+- **Rewrote `buildRelativePath()`** - Now preserves full path from home directory
+  - For folders inside home: uses complete path from `~/` to maintain structure
+  - For folders outside home: uses folder name + relative path
+  - Prevents path collisions between different backup sources
+- **Updated CleanupCommand comment** - Reflects new path structure in orphan detection
+- **Restore behavior improved** - Files restore to correct original locations
+  - Without `--output`: restores to original path (e.g., `~/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md`)
+  - With `--output /tmp/restore`: preserves structure in custom location (e.g., `/tmp/restore/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md`)
+
+#### Impact & Migration
+- **Breaking change** - Old backups used different path structure
+- **Action required**: Delete old backups and create new ones with `kodema backup`
+- **Benefits**:
+  - ✅ No file collisions between different folders
+  - ✅ Clear identification of file origins in backup
+  - ✅ Proper restore to original locations
+  - ✅ Support for backing up multiple app folders simultaneously
+
+### Technical Details
+
+**Modified Functions:**
+- `buildRelativePath()` - Complete rewrite to preserve full path structure from home directory
+
+**Storage Structure Impact:**
+- Old format: `backup/files/{relative-path}/{timestamp}`
+- New format: `backup/files/{full-path-from-home}/{timestamp}`
+- Example: `backup/files/Library/Mobile Documents/iCloud~md~obsidian/notes/work.md/2025-12-12_143022`
+
+**Affected Commands:**
+- `kodema backup` - Uses new path structure for all uploads
+- `kodema restore` - Correctly restores to original locations
+- `kodema test-config` - Validates path lengths with new structure
+- `kodema cleanup` - Works with new path format (no changes needed)
+
 ## [0.8.0] - 2025-12-12
 
 ### Added - Modular Architecture, Testing Framework & Notifications
