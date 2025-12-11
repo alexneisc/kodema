@@ -207,6 +207,19 @@ encryption:
 #   encryptFilenames: true
 
 # ============================================================================
+# Notifications (OPTIONAL)
+# ============================================================================
+# macOS system notifications when operations complete
+notifications:
+  enabled: true                # Show notifications on completion (default: false)
+
+# Examples:
+# - "Backup completed - 150 files uploaded (2.3 GB)"
+# - "Restore completed - 42 files restored (1.1 GB)"
+# - "Cleanup completed - Removed 3 old snapshots"
+# - "Backup interrupted - Progress saved"
+
+# ============================================================================
 # NOTES
 # ============================================================================
 

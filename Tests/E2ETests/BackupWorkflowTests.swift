@@ -26,7 +26,7 @@ struct BackupWorkflowTests {
         let config = createTestConfig(includingFolder: testDir.path)
 
         // Run backup
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Files were uploaded to B2
@@ -46,13 +46,13 @@ struct BackupWorkflowTests {
         createTestFile(in: testDir, name: "file2.txt", content: "Original")
 
         let config = createTestConfig(includingFolder: testDir.path)
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Modify only one file
         createTestFile(in: testDir, name: "file1.txt", content: "Modified")
 
         // Second backup
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Only file1.txt was re-uploaded
@@ -70,13 +70,13 @@ struct BackupWorkflowTests {
         createTestFile(in: testDir, name: "existing.txt", content: "Existing")
 
         let config = createTestConfig(includingFolder: testDir.path)
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Add new file
         createTestFile(in: testDir, name: "new.txt", content: "New")
 
         // Second backup
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. new.txt was uploaded
@@ -94,13 +94,13 @@ struct BackupWorkflowTests {
         createTestFile(in: testDir, name: "file2.txt", content: "Content 2")
 
         let config = createTestConfig(includingFolder: testDir.path)
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Delete one file
         try FileManager.default.removeItem(at: file1)
 
         // Second backup
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Latest snapshot only contains file2.txt
@@ -123,7 +123,7 @@ struct BackupWorkflowTests {
             excludeGlobs: ["*.tmp"]
         )
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. include.txt and include.md were uploaded
@@ -142,7 +142,7 @@ struct BackupWorkflowTests {
 
         let config = createTestConfig(includingFolder: testDir.path)
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Large file was uploaded using multipart upload
@@ -158,7 +158,7 @@ struct BackupWorkflowTests {
 
         let config = createTestConfig(includingFolder: testDir.path)
 
-        try await runIncrementalBackup(config: config, dryRun: true)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: true)
 
         // Verify:
         // 1. No files were uploaded
@@ -179,7 +179,7 @@ struct BackupWorkflowTests {
 
         let config = createTestConfig(includingFolder: testDir.path)
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Manifest was uploaded before file uploads started
@@ -202,7 +202,7 @@ struct BackupWorkflowTests {
             interval: 50
         )
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Manifest was updated multiple times during upload
@@ -218,7 +218,7 @@ struct BackupWorkflowTests {
 
         let config = createTestConfig(includingFolder: testDir.path)
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Success marker was uploaded after manifest
@@ -241,7 +241,7 @@ struct BackupWorkflowTests {
 
         // Mock upload failure for one file
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Backup continued after failure
@@ -261,7 +261,7 @@ struct BackupWorkflowTests {
 
         let config = createTestConfig(includingFolder: testDir.path)
 
-        try await runIncrementalBackup(config: config, dryRun: false)
+        try await runIncrementalBackup(config: config, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Long path file was skipped

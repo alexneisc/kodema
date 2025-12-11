@@ -30,7 +30,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. All files were downloaded
@@ -53,7 +53,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Files from specified snapshot were restored
@@ -75,7 +75,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Only specified paths were restored
@@ -97,7 +97,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Files were restored to custom directory
@@ -121,7 +121,7 @@ struct RestoreWorkflowTests {
         // Note: This test is dangerous as it modifies real files
         // Should only run in isolated test environment
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. File was restored to original location
@@ -173,7 +173,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Existing file was overwritten
@@ -241,7 +241,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: true)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: true)
 
         // Verify:
         // 1. No files were actually downloaded
@@ -268,7 +268,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Large file was downloaded using streaming
@@ -291,7 +291,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. All large files were restored
@@ -318,7 +318,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Files were decrypted during download
@@ -341,7 +341,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Filenames were decrypted correctly
@@ -370,7 +370,7 @@ struct RestoreWorkflowTests {
             listSnapshots: false
         )
 
-        try await runRestore(config: config, options: options, dryRun: false)
+        try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
 
         // Verify:
         // 1. Restore continued after failure
@@ -394,7 +394,7 @@ struct RestoreWorkflowTests {
         )
 
         await #expect(throws: Error.self) {
-            try await runRestore(config: config, options: options, dryRun: false)
+            try await runRestore(config: config, options: options, notificationManager: MockNotificationManager(), dryRun: false)
         }
 
         try FileManager.default.removeItem(at: outputDir)

@@ -111,7 +111,7 @@ func selectSnapshotsToKeep(snapshots: [SnapshotInfo], retention: RetentionConfig
 
 // MARK: - Cleanup command
 
-func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
+func runCleanup(config: AppConfig, notificationManager: NotificationProtocol, dryRun: Bool = false) async throws {
     guard let retention = config.backup?.retention else {
         print("\(errorColor)❌ No retention policy configured\(resetColor)")
         print("Add a retention policy to your config.yml under backup.retention")
@@ -363,4 +363,12 @@ func runCleanup(config: AppConfig, dryRun: Bool = false) async throws {
     print("  🧹 \(dryRun ? "Would clean up" : "Cleaned up") orphaned file versions")
     print("  ✅ Retained \(toKeep.count) snapshots")
     print("\(boldColor)═══════════════════════════════════════════════════════════════\(resetColor)\n")
+
+    // Send success notification (only for actual cleanup, not dry run)
+    if !dryRun {
+        await notificationManager.sendSuccess(
+            operation: "Cleanup",
+            details: "Removed \(deletedSnapshots) old snapshots, retained \(toKeep.count)"
+        )
+    }
 }

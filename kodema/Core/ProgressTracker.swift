@@ -1,5 +1,15 @@
 import Foundation
 
+struct ProgressStats {
+    let completed: Int
+    let failed: Int
+    let skipped: Int
+    let total: Int
+    let completedBytes: Int64
+    let totalBytes: Int64
+    let elapsed: TimeInterval
+}
+
 actor ProgressTracker {
     private(set) var totalFiles: Int = 0
     private(set) var completedFiles: Int = 0
@@ -42,6 +52,18 @@ actor ProgressTracker {
 
     func currentProgress() -> (completed: Int, failed: Int, skipped: Int, total: Int, uploadedBytes: Int64, totalBytes: Int64, currentFile: String, elapsed: TimeInterval) {
         return (completedFiles, failedFiles, skippedFiles, totalFiles, uploadedBytes, totalBytes, currentFileName, Date().timeIntervalSince(startTime))
+    }
+
+    func getStats() -> ProgressStats {
+        return ProgressStats(
+            completed: completedFiles,
+            failed: failedFiles,
+            skipped: skippedFiles,
+            total: totalFiles,
+            completedBytes: uploadedBytes,
+            totalBytes: totalBytes,
+            elapsed: Date().timeIntervalSince(startTime)
+        )
     }
 
     func printProgress() {

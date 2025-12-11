@@ -61,6 +61,10 @@ struct EncryptionConfig: Decodable {
     let encryptFilenames: Bool?     // Encrypt file names in addition to content
 }
 
+struct NotificationsConfig: Decodable {
+    let enabled: Bool?
+}
+
 struct AppConfig: Decodable {
     let b2: B2Config
     let timeouts: TimeoutsConfig?
@@ -69,4 +73,5 @@ struct AppConfig: Decodable {
     let backup: BackupConfig?
     let mirror: MirrorConfig?
     let encryption: EncryptionConfig?
+    let notifications: NotificationsConfig?
 }

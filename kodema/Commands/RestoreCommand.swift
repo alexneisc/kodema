@@ -443,7 +443,7 @@ func downloadAndRestoreFiles(client: B2Client, files: [FileVersionInfo], remoteP
     }
 }
 
-func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false) async throws {
+func runRestore(config: AppConfig, options: RestoreOptions, notificationManager: NotificationProtocol, dryRun: Bool = false) async throws {
     let networkTimeout = TimeInterval(config.timeouts?.networkSeconds ?? 300)
     let maxRetries = config.b2.maxRetries ?? 3
     let client = B2Client(cfg: config.b2, networkTimeout: networkTimeout, maxRetries: maxRetries)
@@ -548,4 +548,27 @@ func runRestore(config: AppConfig, options: RestoreOptions, dryRun: Bool = false
     )
 
     print("  \(localColor)✅ Restore complete!\(resetColor)\n")
+
+    // Send notification with detailed status
+    let stats = await progress.getStats()
+    if stats.failed > 0 {
+        // Has failures - send warning
+        var details = "\(stats.completed) restored (\(formatBytes(stats.completedBytes))), \(stats.failed) failed"
+        if stats.skipped > 0 {
+            details += ", \(stats.skipped) skipped"
+        }
+        await notificationManager.sendWarning(operation: "Restore", details: details)
+    } else if stats.skipped > 0 {
+        // No failures but has skipped files - send success with note
+        await notificationManager.sendSuccess(
+            operation: "Restore",
+            details: "\(stats.completed) restored (\(formatBytes(stats.completedBytes))), \(stats.skipped) skipped"
+        )
+    } else {
+        // Perfect - no failures, no skipped
+        await notificationManager.sendSuccess(
+            operation: "Restore",
+            details: "\(stats.completed) files restored (\(formatBytes(stats.completedBytes)))"
+        )
+    }
 }

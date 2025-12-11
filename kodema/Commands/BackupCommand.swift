@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Main backup logic (incremental with snapshots)
 
-func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws {
+func runIncrementalBackup(config: AppConfig, notificationManager: NotificationProtocol, dryRun: Bool = false) async throws {
     let progress = ProgressTracker()
 
     let excludeHidden = config.filters?.excludeHidden ?? true
@@ -302,6 +302,13 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
         print("  ⚠️  Backup interrupted - progress saved")
         print("  ℹ️  Run 'kodema backup' again to continue from where you left off")
 
+        // Send notification for interrupted backup
+        let stats = await progress.getStats()
+        await notificationManager.sendWarning(
+            operation: "Backup",
+            details: "Progress saved - \(stats.completed) files uploaded (\(formatBytes(stats.completedBytes)))"
+        )
+
         // Show cursor and exit with interrupted status
         print("\u{001B}[?25h")
         fflush(stdout)
@@ -315,4 +322,27 @@ func runIncrementalBackup(config: AppConfig, dryRun: Bool = false) async throws 
     await progress.printFinal()
     print("  📸 Snapshot manifest uploaded: \(remotePrefix)/snapshots/\(timestamp)/manifest.json")
     print("  ✅ Backup completed successfully")
+
+    // Send notification with detailed status
+    let stats = await progress.getStats()
+    if stats.failed > 0 {
+        // Has failures - send warning
+        var details = "\(stats.completed) uploaded (\(formatBytes(stats.completedBytes))), \(stats.failed) failed"
+        if stats.skipped > 0 {
+            details += ", \(stats.skipped) skipped"
+        }
+        await notificationManager.sendWarning(operation: "Backup", details: details)
+    } else if stats.skipped > 0 {
+        // No failures but has skipped files - send success with note
+        await notificationManager.sendSuccess(
+            operation: "Backup",
+            details: "\(stats.completed) uploaded (\(formatBytes(stats.completedBytes))), \(stats.skipped) skipped"
+        )
+    } else {
+        // Perfect - no failures, no skipped
+        await notificationManager.sendSuccess(
+            operation: "Backup",
+            details: "\(stats.completed) files uploaded (\(formatBytes(stats.completedBytes)))"
+        )
+    }
 }

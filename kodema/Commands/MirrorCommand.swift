@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Mirror logic (simple upload all)
 
-func runMirror(config: AppConfig) async throws {
+func runMirror(config: AppConfig, notificationManager: NotificationProtocol) async throws {
     let progress = ProgressTracker()
 
     let excludeHidden = config.filters?.excludeHidden ?? true
@@ -111,4 +111,27 @@ func runMirror(config: AppConfig) async throws {
     }
 
     await progress.printFinal()
+
+    // Send notification with detailed status
+    let stats = await progress.getStats()
+    if stats.failed > 0 {
+        // Has failures - send warning
+        var details = "\(stats.completed) uploaded (\(formatBytes(stats.completedBytes))), \(stats.failed) failed"
+        if stats.skipped > 0 {
+            details += ", \(stats.skipped) skipped"
+        }
+        await notificationManager.sendWarning(operation: "Mirror", details: details)
+    } else if stats.skipped > 0 {
+        // No failures but has skipped files - send success with note
+        await notificationManager.sendSuccess(
+            operation: "Mirror",
+            details: "\(stats.completed) uploaded (\(formatBytes(stats.completedBytes))), \(stats.skipped) skipped"
+        )
+    } else {
+        // Perfect - no failures, no skipped
+        await notificationManager.sendSuccess(
+            operation: "Mirror",
+            details: "\(stats.completed) files uploaded (\(formatBytes(stats.completedBytes)))"
+        )
+    }
 }

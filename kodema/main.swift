@@ -40,7 +40,8 @@ func runMain() async {
             let configURL = readConfigURL(from: args)
             let config = try loadConfig(from: configURL)
             let dryRun = hasDryRunFlag(from: args)
-            try await runIncrementalBackup(config: config, dryRun: dryRun)
+            let notificationManager = NotificationManager(enabled: config.notifications?.enabled ?? false)
+            try await runIncrementalBackup(config: config, notificationManager: notificationManager, dryRun: dryRun)
         } catch {
             print("\u{001B}[?25h", terminator: "")
             fflush(stdout)
@@ -53,7 +54,8 @@ func runMain() async {
         do {
             let configURL = readConfigURL(from: args)
             let config = try loadConfig(from: configURL)
-            try await runMirror(config: config)
+            let notificationManager = NotificationManager(enabled: config.notifications?.enabled ?? false)
+            try await runMirror(config: config, notificationManager: notificationManager)
         } catch {
             print("\u{001B}[?25h", terminator: "")
             fflush(stdout)
@@ -67,7 +69,8 @@ func runMain() async {
             let configURL = readConfigURL(from: args)
             let config = try loadConfig(from: configURL)
             let dryRun = hasDryRunFlag(from: args)
-            try await runCleanup(config: config, dryRun: dryRun)
+            let notificationManager = NotificationManager(enabled: config.notifications?.enabled ?? false)
+            try await runCleanup(config: config, notificationManager: notificationManager, dryRun: dryRun)
         } catch {
             print("\u{001B}[?25h", terminator: "")
             fflush(stdout)
@@ -88,7 +91,8 @@ func runMain() async {
                 return
             }
 
-            try await runRestore(config: config, options: options, dryRun: dryRun)
+            let notificationManager = NotificationManager(enabled: config.notifications?.enabled ?? false)
+            try await runRestore(config: config, options: options, notificationManager: notificationManager, dryRun: dryRun)
         } catch {
             print("\u{001B}[?25h", terminator: "")
             fflush(stdout)
