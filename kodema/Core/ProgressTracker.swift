@@ -117,7 +117,7 @@ actor ProgressTracker {
     }
 
     func printFinal() {
-        let (completed, failed, skipped, total, uploaded, totalSize, _, elapsed) = currentProgress()
+        let (completed, failed, skipped, _, uploaded, totalSize, _, elapsed) = currentProgress()
 
         // Show cursor again
         if cursorHidden {

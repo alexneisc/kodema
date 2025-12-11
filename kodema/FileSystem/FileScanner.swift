@@ -51,7 +51,6 @@ func scanFolder(url: URL, excludeHidden: Bool) -> [FileItem] {
 }
 
 func scanFile(url: URL) -> FileItem? {
-    let fileManager = FileManager.default
     do {
         let values = try url.resourceValues(forKeys: [.isRegularFileKey])
         if values.isRegularFile == true {

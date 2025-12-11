@@ -241,7 +241,6 @@ final class B2Client {
                 return digest.map { String(format: "%02x", $0) }.joined()
             }
 
-            var lastError: Error?
             for attempt in 0...maxRetries {
                 do {
                     let up = try await getUploadPartUrl(fileId: fileId)
@@ -258,7 +257,6 @@ final class B2Client {
                     break
                 } catch {
                     let mapped = mapHTTPErrorToB2(error)
-                    lastError = mapped
                     switch mapped {
                     case .expiredUploadUrl:
                         // Expired upload URL - retry immediately with new URL

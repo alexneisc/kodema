@@ -153,12 +153,11 @@ func runCleanup(config: AppConfig, notificationManager: NotificationProtocol, dr
         // Expected format: backup/snapshots/2024-11-27_143022/manifest.json
         let components = file.fileName.split(separator: "/")
         guard components.count >= 3,
-              let timestampStr = components[components.count - 2] as? Substring,
-              let date = parseTimestamp(String(timestampStr)) else {
+              let date = parseTimestamp(String(components[components.count - 2])) else {
             continue
         }
         snapshots.append(SnapshotInfo(
-            timestamp: String(timestampStr),
+            timestamp: String(components[components.count - 2]),
             date: date,
             manifestPath: file.fileName
         ))

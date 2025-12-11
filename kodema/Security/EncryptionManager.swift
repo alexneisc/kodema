@@ -268,7 +268,7 @@ class EncryptionManager {
         if config.keySource == .passphrase {
             // Password-based encryption
             let passphrase = try getPassphrase()
-            var encryptor = RNCryptor.Encryptor(password: passphrase)
+            let encryptor = RNCryptor.Encryptor(password: passphrase)
             var buffer = [UInt8](repeating: 0, count: chunkSize)
 
             while inputStream.hasBytesAvailable {
@@ -307,7 +307,7 @@ class EncryptionManager {
         } else {
             // Key-based encryption
             let (encryptionKey, hmacKey) = try getEncryptionKeys()
-            var encryptor = RNCryptor.EncryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
+            let encryptor = RNCryptor.EncryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
             var buffer = [UInt8](repeating: 0, count: chunkSize)
 
             while inputStream.hasBytesAvailable {
@@ -369,7 +369,7 @@ class EncryptionManager {
         if config.keySource == .passphrase {
             // Password-based decryption
             let passphrase = try getPassphrase()
-            var decryptor = RNCryptor.Decryptor(password: passphrase)
+            let decryptor = RNCryptor.Decryptor(password: passphrase)
             var buffer = [UInt8](repeating: 0, count: chunkSize)
 
             while inputStream.hasBytesAvailable {
@@ -414,7 +414,7 @@ class EncryptionManager {
         } else {
             // Key-based decryption
             let (encryptionKey, hmacKey) = try getEncryptionKeys()
-            var decryptor = RNCryptor.DecryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
+            let decryptor = RNCryptor.DecryptorV3(encryptionKey: encryptionKey, hmacKey: hmacKey)
             var buffer = [UInt8](repeating: 0, count: chunkSize)
 
             while inputStream.hasBytesAvailable {

@@ -2,6 +2,92 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [0.8.0] - 2025-12-12
+
+### Added - Modular Architecture, Testing Framework & Notifications
+
+#### Modular Codebase Architecture
+- **Complete architectural refactoring** - Organized into 28 focused modules for better maintainability
+- **Logical module structure**:
+  - `Models/` (4 files) - Data structures and configuration
+  - `Core/` (3 files) - Core utilities and progress tracking
+  - `Security/` (2 files) - Encryption and hashing
+  - `FileSystem/` (3 files) - File scanning and iCloud integration
+  - `Network/` (4 files) - Backblaze B2 API client
+  - `Commands/` (8 files) - Command implementations
+  - `Utilities/` (4 files) - Helper functions and notifications
+  - `main.swift` - Entry point with top-level await
+  - `Version.swift` - Version constant
+- **Benefits**: Easier navigation, better code organization, improved testability, reduced merge conflicts
+- **No functional changes** - All features work exactly the same
+
+#### Comprehensive Test Suite
+- **150 tests** across unit, integration, and E2E layers
+- **Unit Tests (69 tests)**: GlobMatcher, RemotePath, ContentType, SHA1, FileChangeDetection
+- **Integration Tests (79 tests)**: B2Client, Config Parsing, Encryption, Retention Policy, Snapshot Manifest
+- **E2E Tests (2 tests)**: Backup and Restore workflow tests
+- **Test Infrastructure**:
+  - Swift Testing framework support
+  - OHHTTPStubs for HTTP mocking
+  - Dependency injection in B2Client for testability
+  - In-memory encryption test keys for non-interactive testing
+  - Strict concurrency enabled for main target
+- All tests passing ✅
+
+#### macOS Native Notifications
+- **Native notification support** using osascript for operation status
+- **Detailed status reporting**:
+  - Success notification: All files uploaded successfully
+  - Success with note: Files uploaded with skipped files
+  - Warning notification: Files uploaded with failures
+- **Shows operation statistics**: Uploaded files, skipped files, failed files, total size
+- **Configurable** via `notifications.enabled` in config (default: true)
+- **Dependency injection** with NotificationProtocol for testability
+- **MockNotificationManager** for unit tests (no real notifications during testing)
+- **Integrated in all commands**: backup, restore, cleanup, mirror
+
+### Fixed
+
+#### Code Quality Improvements
+- **Fixed all Swift compiler warnings** - Clean build with zero warnings
+  - Removed unnecessary type cast (Substring to Substring) in CleanupCommand
+  - Replaced unused variable with underscore in ProgressTracker
+  - Removed unused FileManager variable in FileScanner
+  - Removed unused error tracking variable in B2Client
+  - Changed var to let for non-mutated encryptor/decryptor instances in EncryptionManager
+- **Improved code quality** - Better adherence to Swift best practices
+- Build now completes cleanly without any warnings
+
+#### Documentation
+- **Fixed macOS version requirement** - Corrected from macOS 26.0+ to macOS 13.0+ in README and CHANGELOG
+- **Updated CLAUDE.md** - Complete architecture guide for developers with module documentation
+
+### Technical Details
+
+**New Dependencies:**
+- **OHHTTPStubs** (9.1.0) - HTTP mocking for tests
+
+**New Files:**
+- `kodema/Utilities/NotificationManager.swift` - Native macOS notification support
+- `Tests/MockNotificationManager.swift` - Mock for testing
+- 13 new test files organized by layer (Unit/Integration/E2E)
+- `Tests/IntegrationTests/Mocks/B2ClientTestHelpers.swift` - Test utilities
+
+**New Data Structures:**
+- `NotificationConfig` - Configuration for notifications
+- `NotificationProtocol` - Protocol for dependency injection
+- `ProgressStats` - Statistics for operation reporting
+
+**Modified Functions:**
+- All command files updated to use notification manager
+- `ProgressTracker.getStats()` - Retrieve operation statistics
+- `B2Client` - Added URLSession dependency injection for testing
+
+**Package Changes:**
+- Added test target with Swift Testing framework
+- Added OHHTTPStubs dependency for HTTP mocking
+- StrictConcurrency enabled for better safety
+
 ## [0.7.2] - 2025-12-09
 
 ### Added - Manifest Encryption
@@ -515,7 +601,7 @@ kodema restore --path folder1 --list-snapshots # Filter snapshots
 - YAML configuration support
 
 ### Supported Platforms
-- macOS 26.0+
+- macOS 13.0+
 
 ---
 

@@ -556,7 +556,7 @@ b2 sync b2://my-backup-bucket/mirror/Documents ~/restored-docs
 
 ## Requirements
 
-- macOS 26.0+
+- macOS 13.0+
 - Swift 6.0+
 - Backblaze B2 account
 
