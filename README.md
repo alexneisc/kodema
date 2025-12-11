@@ -257,17 +257,31 @@ backup/
 ├── .success-markers/
 │   └── 2024-11-27_143022         # Completion marker
 └── files/
-    └── Documents/
-        └── myfile.txt/
-            ├── 2024-11-27_143022  # Version from Nov 27
-            └── 2024-11-28_091545  # Version from Nov 28
+    ├── Documents/                # Standard ~/Documents files
+    │   └── myfile.txt/
+    │       ├── 2024-11-27_143022  # Version from Nov 27
+    │       └── 2024-11-28_091545  # Version from Nov 28
+    └── Library/
+        └── Mobile Documents/     # iCloud Drive files
+            └── iCloud~md~obsidian/
+                └── notes.md/
+                    └── 2024-11-27_143022
 ```
+
+**Note:** Paths preserve full directory structure from home directory to ensure:
+- No collisions when backing up multiple folders
+- Files restore to their correct original locations
+- Clear identification of file origins
 
 ### Mirror
 ```
 mirror/
-└── Documents/
-    └── myfile.txt            # Latest version only
+├── Documents/
+│   └── myfile.txt               # Latest version only
+└── Library/
+    └── Mobile Documents/
+        └── iCloud~md~obsidian/
+            └── notes.md
 ```
 
 ## Retention Policy
@@ -513,16 +527,23 @@ b2 download-file-by-name my-backup-bucket \
 ### Restore Single File
 
 ```bash
-# From backup (specific version)
+# From backup (specific version) - standard ~/Documents file
 b2 download-file-by-name my-backup-bucket \
   backup/files/Documents/myfile.txt/2024-11-27_143022 \
   myfile.txt
+
+# From backup (iCloud file)
+b2 download-file-by-name my-backup-bucket \
+  "backup/files/Library/Mobile Documents/iCloud~md~obsidian/notes.md/2024-11-27_143022" \
+  notes.md
 
 # From mirror (latest version)
 b2 download-file-by-name my-backup-bucket \
   mirror/Documents/myfile.txt \
   myfile.txt
 ```
+
+**Note:** Paths include full directory structure from home directory. Use quotes for paths with spaces.
 
 ### Restore Entire Directory
 

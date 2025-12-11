@@ -67,8 +67,11 @@ kodema restore
 # Restore specific snapshot
 kodema restore --snapshot 2024-11-27_143022
 
-# Restore specific file
+# Restore specific file (standard ~/Documents file)
 kodema restore --path Documents/myfile.txt
+
+# Restore iCloud file
+kodema restore --path "Library/Mobile Documents/iCloud~md~obsidian/notes.md"
 
 # List available snapshots
 kodema restore --list-snapshots
@@ -256,8 +259,10 @@ Backblaze B2 has a 1000-byte limit for file names. Files with very long paths ar
 **Example warning:**
 ```
 ⚠️  Skipping file with path too long (1039 bytes > 950 limit)
-   Path: backup/files/Documents/project/node_modules/.../file.txt/20250103_120000
+   Path: backup/files/Documents/Work/Project/node_modules/.../very-long-filename.js/20250103_120000
 ```
+
+**Note:** Paths include full directory structure from home directory (e.g., `Documents/...`, `Library/Mobile Documents/...`).
 
 **Why it happens:**
 - Deep folder structures (e.g., `node_modules`, nested projects)

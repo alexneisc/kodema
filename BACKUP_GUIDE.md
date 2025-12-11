@@ -110,11 +110,14 @@ kodema restore
 # Restore specific snapshot
 kodema restore --snapshot 2024-11-27_143022
 
-# Restore specific file from latest snapshot
+# Restore specific file from latest snapshot (standard ~/Documents file)
 kodema restore --path Documents/myfile.txt
 
-# Restore specific folder
-kodema restore --path Documents/Photos/ --snapshot 2024-11-27_143022
+# Restore specific file from iCloud folder
+kodema restore --path "Library/Mobile Documents/iCloud~md~obsidian/notes.md"
+
+# Restore entire iCloud app folder
+kodema restore --path "Library/Mobile Documents/iCloud~md~obsidian" --snapshot 2024-11-27_143022
 
 # Restore to custom location
 kodema restore --output ~/restored-files/
@@ -123,7 +126,7 @@ kodema restore --output ~/restored-files/
 kodema restore --list-snapshots
 
 # List snapshots containing specific path (shows only relevant snapshots)
-kodema restore --path folder1 --list-snapshots
+kodema restore --path "Library/Mobile Documents/iCloud~md~obsidian" --list-snapshots
 
 # Force overwrite without confirmation
 kodema restore --snapshot 2024-11-27_143022 --force
@@ -131,7 +134,7 @@ kodema restore --snapshot 2024-11-27_143022 --force
 # Combined: restore specific files to custom location
 kodema restore --snapshot 2024-11-27_143022 \
   --path Documents/important.txt \
-  --path Documents/Photos/ \
+  --path "Library/Mobile Documents/iCloud~md~obsidian" \
   --output ~/recovered/
 ```
 
@@ -145,10 +148,13 @@ kodema restore --snapshot 2024-11-27_143022 \
 7. Restore original modification timestamps
 
 **Path filtering:**
-- `--path folder1` matches files in folder1 at any level
+- Paths are relative to home directory (e.g., `Documents/myfile.txt` for `~/Documents/myfile.txt`)
+- iCloud paths include full structure: `Library/Mobile Documents/iCloud~md~obsidian/notes.md`
+- `--path folder` matches files in folder at any level
 - Supports exact paths, prefixes, and directory components
-- Works with or without trailing slash: `folder1` = `folder1/`
+- Works with or without trailing slash: `folder` = `folder/`
 - Can specify multiple paths: `--path file1.txt --path folder2/`
+- Use quotes for paths with spaces or special characters
 - `--list-snapshots` with `--path` shows only snapshots containing those files
 
 **Safety and conflict handling:**
