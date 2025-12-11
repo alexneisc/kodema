@@ -12,14 +12,19 @@ final class B2Client {
     private var authorize: B2AuthorizeResponse?
     private var bucketId: String?
 
-    init(cfg: B2Config, networkTimeout: TimeInterval, maxRetries: Int) {
+    init(cfg: B2Config, networkTimeout: TimeInterval, maxRetries: Int, session: URLSession? = nil) {
         self.cfg = cfg
         self.networkTimeout = networkTimeout
         self.maxRetries = max(0, maxRetries)
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = networkTimeout
-        config.timeoutIntervalForResource = networkTimeout
-        self.session = URLSession(configuration: config)
+
+        if let customSession = session {
+            self.session = customSession
+        } else {
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = networkTimeout
+            config.timeoutIntervalForResource = networkTimeout
+            self.session = URLSession(configuration: config)
+        }
     }
 
     func ensureAuthorized() async throws {

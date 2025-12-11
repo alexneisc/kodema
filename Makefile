@@ -41,7 +41,7 @@ resolve:
 # Run tests
 test:
 	@echo "🧪 Running tests..."
-	@echo "⚠️  No tests defined yet (requires library target refactoring)"
+	swift test
 
 # Show help
 help:
