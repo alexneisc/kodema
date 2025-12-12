@@ -54,6 +54,50 @@ All notable changes to Kodema will be documented in this file.
 - ✅ Works with files that have incorrect/cached status
 - ✅ More reliable for apps with non-standard iCloud sync (e.g., SnippetsLab)
 
+### Improved - Restore Output Directory Validation
+
+#### Problem
+- Running `kodema restore --output /path/to/nonexistent` failed with hundreds of confusing errors
+- Each file showed "Permission denied" error without explaining the root cause
+- Users couldn't easily tell that the output directory didn't exist
+- No automatic directory creation - manual setup always required
+
+#### Solution
+- **Added output directory validation and auto-creation** at restore start
+- Checks if output directory exists before downloading files
+- Automatically creates directory with intermediate paths if possible
+- Shows single clear error message with suggestions if validation fails
+- Validates that path is a directory, not a file
+
+#### Implementation
+- Added directory check in `runRestore()` after determining output location
+- Uses `FileManager.createDirectory(withIntermediateDirectories: true)`
+- Three validation scenarios:
+  1. Directory doesn't exist → auto-create with success message
+  2. Cannot create (permissions) → show error with suggestions
+  3. Path exists but is a file → show error with suggestions
+
+#### Error Messages
+When directory cannot be created:
+```
+✗ Error: Output directory does not exist and cannot be created
+  Directory: /Users/alex/test_restore
+  Reason: Permission denied
+
+Suggestions:
+  • Create the directory manually: mkdir -p "/Users/alex/test_restore"
+  • Check parent directory permissions
+  • Use a different output directory with --output <path>
+  • Omit --output to restore to original locations
+```
+
+#### Impact
+- ✅ Single clear error instead of hundreds of confusing errors
+- ✅ Automatic directory creation for user convenience
+- ✅ Better UX with actionable suggestions
+- ✅ Catches configuration issues before starting expensive downloads
+- ✅ Saves time and bandwidth by failing fast
+
 ## [0.9.0] - 2025-12-12
 
 ### Fixed - Path Handling for Multiple Backup Folders

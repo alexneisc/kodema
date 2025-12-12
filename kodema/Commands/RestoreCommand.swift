@@ -476,6 +476,37 @@ func runRestore(config: AppConfig, options: RestoreOptions, notificationManager:
     let outputDir = options.outputDirectory ?? FileManager.default.homeDirectoryForCurrentUser
     print("  📁 Restore location: \(outputDir.path)")
 
+    // Check if output directory exists, create if needed
+    if options.outputDirectory != nil {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: outputDir.path, isDirectory: &isDirectory)
+
+        if !exists {
+            // Try to create the directory
+            do {
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true, attributes: nil)
+                print("  \(localColor)✓\(resetColor) Created output directory: \(outputDir.path)")
+            } catch {
+                print("\n\(errorColor)✗ Error: Output directory does not exist and cannot be created\(resetColor)")
+                print("  Directory: \(outputDir.path)")
+                print("  \(dimColor)Reason: \(error.localizedDescription)\(resetColor)")
+                print("\n\(boldColor)Suggestions:\(resetColor)")
+                print("  • Create the directory manually: mkdir -p \"\(outputDir.path)\"")
+                print("  • Check parent directory permissions")
+                print("  • Use a different output directory with --output <path>")
+                print("  • Omit --output to restore to original locations\n")
+                throw RestoreError.invalidSelection
+            }
+        } else if !isDirectory.boolValue {
+            print("\n\(errorColor)✗ Error: Output path exists but is not a directory\(resetColor)")
+            print("  Path: \(outputDir.path)")
+            print("\n\(boldColor)Suggestions:\(resetColor)")
+            print("  • Use a different output directory with --output <path>")
+            print("  • Remove the file at this path if it's not needed\n")
+            throw RestoreError.invalidSelection
+        }
+    }
+
     let totalBytes = filesToRestore.reduce(Int64(0)) { $0 + $1.size }
     print("  💾 Total size: \(formatBytes(totalBytes))")
 
