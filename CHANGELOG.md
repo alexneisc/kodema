@@ -4,6 +4,8 @@ All notable changes to Kodema will be documented in this file.
 
 ## [Unreleased]
 
+## [0.9.1] - 2025-12-12
+
 ### Improved - iCloud Download Progress Indicator
 
 #### Enhancement

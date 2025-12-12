@@ -1,1 +1,1 @@
-public let KODEMA_VERSION = "0.9.0"
+public let KODEMA_VERSION = "0.9.1"
