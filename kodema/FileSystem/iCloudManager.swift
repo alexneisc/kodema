@@ -22,6 +22,10 @@ func checkFileStatus(url: URL) -> String {
 
 func waitForICloudDownload(url: URL, timeoutSeconds: Int) async -> Bool {
     let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+    let startTime = Date()
+    var iteration = 0
+    let spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
     while Date() < deadline {
         do {
             let values = try url.resourceValues(forKeys: [
@@ -30,18 +34,55 @@ func waitForICloudDownload(url: URL, timeoutSeconds: Int) async -> Bool {
             ])
             let isUbiquitous = values.isUbiquitousItem ?? false
             let status = values.ubiquitousItemDownloadingStatus
+
             if !isUbiquitous {
+                // Clear the progress line before returning
+                print("\r\u{001B}[K", terminator: "")
+                fflush(stdout)
                 return true
             }
             if status == URLUbiquitousItemDownloadingStatus.current {
+                // Clear the progress line before returning
+                print("\r\u{001B}[K", terminator: "")
+                fflush(stdout)
                 return true
+            }
+
+            // If status is nil or NotDownloaded, try to access the file
+            // macOS will download on-demand when we try to read it
+            if status == nil || status == URLUbiquitousItemDownloadingStatus.notDownloaded {
+                // Try to open file for reading to trigger on-demand download
+                if let fileHandle = try? FileHandle(forReadingFrom: url) {
+                    try? fileHandle.close()
+                    // File is readable, clear progress and return success
+                    print("\r\u{001B}[K", terminator: "")
+                    fflush(stdout)
+                    return true
+                }
             }
         } catch {
             // ignore and retry
         }
+
+        // Show progress on same line
+        let elapsed = Date().timeIntervalSince(startTime)
+        let elapsedStr = formatDuration(elapsed)
+        let spinner = spinners[iteration % spinners.count]
+        print("\r\u{001B}[K  \(cloudColor)\(spinner) Downloading from iCloud... (\(elapsedStr) elapsed)\(resetColor)", terminator: "")
+        fflush(stdout)
+
+        iteration += 1
         try? await Task.sleep(nanoseconds: 500_000_000)
-        if Task.isCancelled { return false }
+        if Task.isCancelled {
+            print("\r\u{001B}[K", terminator: "")
+            fflush(stdout)
+            return false
+        }
     }
+
+    // Clear the progress line on timeout
+    print("\r\u{001B}[K", terminator: "")
+    fflush(stdout)
     return false
 }
 

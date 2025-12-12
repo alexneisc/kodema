@@ -2,6 +2,58 @@
 
 All notable changes to Kodema will be documented in this file.
 
+## [Unreleased]
+
+### Improved - iCloud Download Progress Indicator
+
+#### Enhancement
+- **Added visual feedback for iCloud file downloads** with animated spinner and elapsed time
+- Previous implementation silently waited without user feedback
+- Users couldn't tell if backup was stuck or actively downloading
+
+#### Implementation
+- Added animated spinner (⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) rotating during download
+- Displays elapsed time: `☁️ ⠋ Downloading from iCloud... (15s elapsed)`
+- Progress message updates every 500ms
+- Properly clears progress line when download completes or times out
+- Clean terminal output - no orphaned progress messages
+
+#### Impact
+- ✅ Users can see backup is actively working
+- ✅ Elapsed time helps estimate if timeout adjustment needed
+- ✅ Better UX during iCloud file processing
+- ✅ Distinguishes between hanging and slow downloads
+
+### Fixed - iCloud On-Demand Download
+
+#### Problem
+- **Backup hung indefinitely** when processing iCloud files with `nil` or `.notDownloaded` status
+- Previous implementation only checked for `.current` status, waiting up to 30 minutes for status change
+- Files were readable (macOS provides on-demand download) but kodema couldn't detect availability
+- Affected files in iCloud containers where sync metadata was stale or incomplete
+
+#### Solution
+- **Implemented on-demand download detection** in `waitForICloudDownload()`
+- Now attempts to open files with `nil` or `.notDownloaded` status for reading
+- macOS automatically downloads file content when accessed (on-demand behavior)
+- Much faster than waiting for status metadata to update (instant vs. minutes/timeout)
+- Handles three status cases:
+  - `.current` - File already downloaded, proceed immediately
+  - `.notDownloaded` - Try to open file, triggers on-demand download
+  - `nil` - Try to open file, triggers on-demand download
+
+#### Technical Changes
+- Modified `kodema/FileSystem/iCloudManager.swift`
+- Added file readability check using `FileHandle(forReadingFrom:)`
+- If file can be opened, considers it available regardless of status metadata
+- Falls back to waiting loop if file cannot be opened yet
+
+#### Impact
+- ✅ No more hanging on iCloud files with stale metadata
+- ✅ Faster backups - leverages macOS on-demand download
+- ✅ Works with files that have incorrect/cached status
+- ✅ More reliable for apps with non-standard iCloud sync (e.g., SnippetsLab)
+
 ## [0.9.0] - 2025-12-12
 
 ### Fixed - Path Handling for Multiple Backup Folders

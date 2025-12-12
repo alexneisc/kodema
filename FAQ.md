@@ -202,15 +202,26 @@ Run `kodema test-config` to see specific errors:
 
 ### iCloud files won't download
 
-- ✅ iCloud Drive enabled in System Settings
-- ✅ Enough local disk space
-- ✅ Internet connection stable
+Kodema uses **on-demand download** - files are downloaded automatically when accessed. This works even if iCloud sync metadata is stale.
 
-Increase timeout:
+**How it works:**
+- Kodema tries to open iCloud files for reading
+- macOS automatically downloads file content on-demand
+- Much faster than waiting for sync status updates
+- Works with files that show as "not downloaded" but are actually accessible
+
+**If you see timeouts:**
+- ✅ Check iCloud Drive is enabled in System Settings
+- ✅ Verify enough local disk space (needs 120% of file size)
+- ✅ Confirm internet connection is stable
+
+**Increase timeout if needed:**
 ```yaml
 timeouts:
-  icloudDownloadSeconds: 3600  # 1 hour
+  icloudDownloadSeconds: 3600  # 1 hour (rarely needed)
 ```
+
+Most files download instantly via on-demand mechanism. Timeouts are rare unless files are corrupted or iCloud sync is broken.
 
 ### Not enough disk space for iCloud files
 

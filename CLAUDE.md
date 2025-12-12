@@ -100,6 +100,10 @@ kodema/
 - Disk space validation: Before downloading iCloud files, verifies 120% of file size is available (20% buffer)
 - `startDownloadIfNeeded()`: Triggers iCloud file download if space check passes
 - `waitForICloudDownload()`: Polls until file is locally available (with timeout)
+  - **On-demand download support**: If file has status `nil` or `.notDownloaded`, attempts to open file for reading
+  - macOS automatically downloads iCloud files on-demand when accessed, much faster than waiting for status change
+  - Handles three status cases: `.current` (already downloaded), `.notDownloaded` (triggers download), `nil` (triggers download)
+  - This prevents hanging on files that are readable but have incorrect/cached status metadata
 - `evictIfUbiquitous()`: Removes local copy after upload to save disk space
 - Uses `URLResourceKey`: `.isUbiquitousItemKey`, `.ubiquitousItemDownloadingStatusKey`
 - Files skipped if insufficient disk space (marked as failed with warning)
@@ -504,7 +508,7 @@ kodema/
 
 ## Common Pitfalls
 
-1. **iCloud Timeouts**: Default 30min may be insufficient for large files on slow connections - increase `icloudDownloadSeconds`
+1. **iCloud Download Strategy**: Kodema uses on-demand download for iCloud files - attempts to open files with `nil` or `.notDownloaded` status, triggering macOS automatic download. This is much faster than waiting for status metadata to update. Default 30min timeout (`icloudDownloadSeconds`) should be sufficient for most files. If files have status `.current` but are actually stub files, they will be downloaded on-demand when accessed.
 
 2. **Part Size**: Must be ≥ B2 minimum (5MB), configured in MB not bytes
 
